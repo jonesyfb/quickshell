@@ -55,6 +55,9 @@ Item {
         return result
     }
 
+    property bool calendarVisible: false
+    function toggleCalendar() { calendarVisible = !calendarVisible }
+
     function connectVpn()    { vpnConnect.running    = true }
     function disconnectVpn() { vpnDisconnect.running = true }
 

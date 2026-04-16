@@ -23,6 +23,12 @@ ShellRoot {
         }
     }
 
+    // Calendar popup – primary monitor, toggled by clicking the clock
+    CalendarWidget {
+        screen: Quickshell.screens[0]
+        sysState: sys
+    }
+
     // Stats overlay – primary monitor only
     StatsOverlay {
         screen: Quickshell.screens[0]

@@ -113,17 +113,23 @@ PanelWindow {
 
         Rectangle { visible: bar.isPrimary; width: 1; height: 16; color: sysState.colMuted }
 
-        // Clock – every monitor
+        // Clock – every monitor, click to toggle calendar
         Text {
             id: clockText
             text: Qt.formatDateTime(new Date(), "ddd, MMM dd - hh:mm AP")
-            color: sysState.colBlue
+            color: sysState.calendarVisible ? sysState.colCyan : sysState.colBlue
             font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily; font.bold: true
             Layout.rightMargin: 8
 
             Timer {
                 interval: 1000; running: true; repeat: true
                 onTriggered: clockText.text = Qt.formatDateTime(new Date(), "ddd, MMM dd - hh:mm AP")
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: sysState.toggleCalendar()
             }
         }
     }
