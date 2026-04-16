@@ -77,12 +77,17 @@ PanelWindow {
                 lines.push(l.trim())
         }
 
+        var today = new Date(); today.setHours(0, 0, 0, 0)
+
         var events = []
         var ev = null
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i]
             if      (line === "BEGIN:VEVENT") ev = { summary: "", start: null, end: null, allDay: false }
-            else if (line === "END:VEVENT" && ev) { if (ev.start) events.push(ev); ev = null }
+            else if (line === "END:VEVENT" && ev) {
+                if (ev.start && ev.start >= today) events.push(ev)
+                ev = null
+            }
             else if (ev) {
                 if      (line.startsWith("SUMMARY:"))  ev.summary = line.substring(8)
                 else if (line.match(/^DTSTART/)) { var r = parseIcsDate(line); ev.start = r.date; ev.allDay = r.allDay }
