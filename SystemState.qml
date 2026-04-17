@@ -22,8 +22,32 @@ Item {
     readonly property string fontFamily: "Jetbrains Nerd Mono"
     readonly property int    fontSize:   14
 
+    // ── Theme (Huginn) ────────────────────────────────────────────────────────
+    property color colAccent: "#89ddff"   // Thought Glow — updated by theme switcher
+    property color colGold:   "#f7c95e"   // Rune Wisdom Gold
+
+    Process {
+        id: themeReader
+        command: ["cat", "/home/nate/.config/huginn/current-theme.json"]
+        stdout: SplitParser {
+            onRead: function(line) {
+                if (!line.trim()) return
+                try {
+                    var t = JSON.parse(line)
+                    if (t.accent) root.colAccent = t.accent
+                    if (t.gold)   root.colGold   = t.gold
+                } catch(e) {}
+            }
+        }
+    }
+    Timer {
+        interval: 2000; running: true; repeat: true
+        onTriggered: themeReader.running = true
+    }
+
     // ── Metrics ───────────────────────────────────────────────────────────────
     property int  cpuUsage:    0
+    property int  gpuUsage:    0
     property int  memUsage:    0
     property int  volumeLevel: 0
     property var  lastCpuIdle:  0
@@ -59,8 +83,24 @@ Item {
         return result
     }
 
-    property bool calendarVisible: false
+    property bool   calendarVisible: false
     function toggleCalendar() { calendarVisible = !calendarVisible }
+
+    // ── Now playing ───────────────────────────────────────────────────────────
+    property string nowPlaying: ""
+
+    Process {
+        id: nowPlayingProc
+        command: ["playerctl", "metadata", "--format", "{{ artist }} — {{ title }}"]
+        stdout: SplitParser {
+            onRead: function(data) {
+                var t = data.trim()
+                root.nowPlaying = (t && t !== " — ") ? t : ""
+            }
+        }
+        onExited: function(code) { if (code !== 0) root.nowPlaying = "" }
+        Component.onCompleted: running = true
+    }
 
     function connectVpn()    { vpnConnect.running    = true }
     function disconnectVpn() { vpnDisconnect.running = true }
@@ -93,6 +133,22 @@ Item {
                 root.lastCpuIdle  = idleTime
             }
         }
+        Component.onCompleted: running = true
+    }
+
+    Process {
+        id: gpuProc
+        command: ["sh", "-c",
+            "f=$(ls /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null | head -1); " +
+            "[ -f \"$f\" ] && cat \"$f\" || echo -1"
+        ]
+        stdout: SplitParser {
+            onRead: function(data) {
+                var val = parseInt(data.trim())
+                root.gpuUsage = isNaN(val) ? -1 : val
+            }
+        }
+        onExited: function(code) { if (code !== 0) root.gpuUsage = -1 }
         Component.onCompleted: running = true
     }
 
@@ -239,12 +295,14 @@ Item {
     Timer {
         interval: 2000; running: true; repeat: true
         onTriggered: {
-            cpuProc.running   = true
-            memProc.running   = true
-            volProc.running   = true
-            netProc.running   = true
-            vpnStatus.running = true
-            batteryProc.running = true
+            cpuProc.running        = true
+            gpuProc.running        = true
+            memProc.running        = true
+            volProc.running        = true
+            netProc.running        = true
+            vpnStatus.running      = true
+            nowPlayingProc.running = true
+            batteryProc.running    = true
             brightnessControl.updateBrightness()
             refreshRateManager.updateRefreshRate()
         }

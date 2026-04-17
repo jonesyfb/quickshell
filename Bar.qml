@@ -1,5 +1,6 @@
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Io
 import QtQuick
 import QtQuick.Layouts
 
@@ -18,6 +19,79 @@ PanelWindow {
     anchors { top: true; left: true; right: true }
     implicitHeight: 30
     color: sysState.colBg
+
+    // ── Huginn widget – primary monitor, left side ───────────────────────────
+    Row {
+        id: huginnWidget
+        visible: bar.isPrimary
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: 12
+        spacing: 5
+
+        property bool huginnVisible: false
+
+        Process {
+            id: huginnToggle
+            command: ["bash", "/home/nate/dotfiles/huginn/scripts/huginn-toggle.sh"]
+        }
+
+        Process {
+            id: huginnVisChecker
+            command: ["sh", "-c", "[ -f /tmp/huginn-visible ] && echo 'true' || echo 'false'"]
+            stdout: SplitParser {
+                onRead: function(data) { huginnWidget.huginnVisible = (data.trim() === "true") }
+            }
+        }
+
+        Timer { interval: 200; running: true; repeat: true; onTriggered: huginnVisChecker.running = true }
+
+        MouseArea {
+            implicitWidth:  runeText.implicitWidth + 8
+            implicitHeight: bar.implicitHeight
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: huginnToggle.running = true
+            onEntered:  runeText.color = "#f7c95e"
+            onExited:   runeText.color = huginnWidget.huginnVisible ? "#f7c95e" : sysState.colMuted
+
+            Text {
+                id: runeText
+                anchors.centerIn: parent
+                text: "ᚱ"
+                color: huginnWidget.huginnVisible ? "#f7c95e" : sysState.colMuted
+                font.pixelSize: 16
+                font.family: "JetBrainsMono Nerd Font"
+
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+        }
+    }
+
+    // ── Now playing – primary monitor, left side (beside rune) ──────────────
+    Row {
+        visible: bar.isPrimary && sysState.nowPlaying !== ""
+        anchors.left: huginnWidget.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: 10
+        spacing: 5
+
+        Text {
+            text: "♪"
+            color: sysState.colGreen
+            font.pixelSize: sysState.fontSize
+            font.family: sysState.fontFamily
+        }
+        Text {
+            text: sysState.nowPlaying
+            color: sysState.colFg
+            font.pixelSize: sysState.fontSize
+            font.family: sysState.fontFamily
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            width: Math.min(implicitWidth, 280)
+        }
+    }
 
     // ── Right-side stats row ──────────────────────────────────────────────────
     RowLayout {
@@ -95,6 +169,15 @@ PanelWindow {
         Rectangle { visible: bar.isPrimary; width: 1; height: 16; color: sysState.colMuted }
 
         Text {
+            visible: bar.isPrimary && sysState.gpuUsage >= 0
+            text: "GPU: " + sysState.gpuUsage + "%"
+            color: sysState.colGreen
+            font { family: sysState.fontFamily; pixelSize: sysState.fontSize; bold: true }
+        }
+
+        Rectangle { visible: bar.isPrimary && sysState.gpuUsage >= 0; width: 1; height: 16; color: sysState.colMuted }
+
+        Text {
             visible: bar.isPrimary
             text: "Mem: " + sysState.memUsage + "%"
             color: sysState.colCyan
@@ -150,7 +233,7 @@ PanelWindow {
         Text {
             id: clockText
             text: Qt.formatDateTime(new Date(), "ddd, MMM dd - hh:mm AP")
-            color: sysState.calendarVisible ? sysState.colCyan : sysState.colBlue
+            color: sysState.calendarVisible ? sysState.colAccent : sysState.colBlue
             font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily; font.bold: true
             Layout.rightMargin: 8
 
@@ -185,7 +268,7 @@ PanelWindow {
                 // Row skips invisible children automatically
                 visible: output === bar.modelData.name
                 text: sysState.toRoman(index)
-                color: isFocused ? sysState.colCyan : sysState.colBlue
+                color: isFocused ? sysState.colAccent : sysState.colBlue
                 font.pixelSize: 14; font.bold: true
 
                 MouseArea {

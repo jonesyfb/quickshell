@@ -39,4 +39,15 @@ ShellRoot {
     NoteWidget {
         screen: Quickshell.screens[0]
     }
+
+    // Huginn AI overlay – primary monitor only
+    HuginnOverlay {
+        targetScreen: Quickshell.screens[0]
+    }
+
+    // Desktop notifications – primary monitor only
+    NotificationsOverlay {
+        targetScreen: Quickshell.screens[0]
+        sysState: sys
+    }
 }
