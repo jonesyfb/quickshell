@@ -174,6 +174,18 @@ PanelWindow {
     }
 
     Process { id: confirmProc }
+
+    // Grabs image/png from clipboard → /tmp/huginn-img-TIMESTAMP.png, echoes path or "none"
+    Process {
+        id: clipImageProc
+        stdout: SplitParser {
+            onRead: function(line) {
+                var p = line.trim()
+                if (p && p !== "none") root.attachImage(p)
+            }
+        }
+    }
+
     Process { id: imageProc
         stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
         onExited: function(code) { root.isStreaming = false }
@@ -211,6 +223,37 @@ PanelWindow {
         confirmProc.command = ["python3", root.sendScript, "confirm", confirmId, approved ? "true" : "false"]
         confirmProc.running = true
         root.pendingConfirmId = ""
+    }
+
+    function attachImage(path) {
+        root.pendingImagePath = path
+        // Show preview in input area — caption is whatever's in inputField
+        chatView.positionViewAtEnd()
+    }
+
+    function sendImage() {
+        var path = root.pendingImagePath
+        if (!path || root.isStreaming) return
+        var caption = inputField.text.trim()
+        chatModel.append({ role: "image_sent", content: caption || "Image", detail: path, result: "" })
+        inputField.text = ""
+        root.pendingImagePath = ""
+        root.isStreaming = true
+        chatView.positionViewAtEnd()
+        imageProc.command = ["python3", root.sendScript, "image_file", path, caption, root.ttsEnabled ? "true" : "false"]
+        imageProc.running = true
+    }
+
+    function grabClipboardImage() {
+        var ts = Date.now()
+        var dest = "/tmp/huginn-img-" + ts + ".png"
+        clipImageProc.command = [
+            "sh", "-c",
+            "wl-paste --list-types 2>/dev/null | grep -qi 'image/' " +
+            "&& wl-paste --type image/png > " + dest + " 2>/dev/null " +
+            "&& echo " + dest + " || echo none"
+        ]
+        clipImageProc.running = true
     }
 
     // ── Ping to track connection status ───────────────────────────────────────
@@ -282,6 +325,21 @@ PanelWindow {
     }
 
     // ── UI ────────────────────────────────────────────────────────────────────
+    DropArea {
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+        onDropped: function(drop) {
+            var urls = drop.urls
+            for (var i = 0; i < urls.length; i++) {
+                var path = urls[i].toString().replace("file://", "")
+                if (/\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(path)) {
+                    root.attachImage(path)
+                    break
+                }
+            }
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: 14
@@ -522,6 +580,7 @@ PanelWindow {
                     visible: role === "thinking" ? root.showThinking : true
                     height: role === "tool_call"                                                            ? toolPill.implicitHeight + 6
                           : (role === "confirm" || role === "confirm_allowed" || role === "confirm_denied") ? confirmBubble.height + 8
+                          : role === "image_sent"                                                          ? imageBubble.height + 8
                           : role === "thinking"                                                             ? thinkingPill.implicitHeight + 6
                           : bubble.height + 8
 
@@ -737,12 +796,48 @@ PanelWindow {
                         }
                     }
 
+                    // ── Image sent bubble ─────────────────────────────────────
+                    Rectangle {
+                        id: imageBubble
+                        visible: role === "image_sent"
+                        anchors.right: parent.right
+                        anchors.rightMargin: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(imgBubbleRow.implicitWidth + 24, chatView.width - 80)
+                        height: imgBubbleRow.implicitHeight + 16
+                        radius: 8
+                        color: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.10)
+                        border.color: root.colAccent
+                        border.width: 1
+
+                        Row {
+                            id: imgBubbleRow
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
+                            spacing: 6
+                            Text {
+                                text: "\uf03e"
+                                color: root.colAccent
+                                font.pixelSize: 13; font.family: root.fontMono
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: content || "image"
+                                color: root.colTextPrimary
+                                font.pixelSize: 13; font.family: root.fontSans
+                                elide: Text.ElideRight
+                                width: Math.min(implicitWidth, imageBubble.width - 60)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
                     // User messages: right-aligned
                     // Huginn messages: left-aligned with rune prefix
                     Rectangle {
                         id: bubble
                         visible: role !== "tool_call" && role !== "thinking"
                               && role !== "confirm" && role !== "confirm_allowed" && role !== "confirm_denied"
+                              && role !== "image_sent"
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.right:      role === "user"      ? parent.right : undefined
                         anchors.left:       role === "assistant" ? parent.left  : undefined
@@ -839,6 +934,41 @@ PanelWindow {
                     anchors.topMargin: 4
                     spacing: 6
 
+                    // Paperclip: attach image from clipboard or send pending image
+                    Rectangle {
+                        implicitWidth:  32
+                        implicitHeight: 32
+                        radius: 8
+                        color: root.pendingImagePath !== ""
+                            ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.18)
+                            : clipArea.containsMouse ? Qt.rgba(1,1,1,0.06) : "transparent"
+                        border.color: root.pendingImagePath !== "" ? root.colAccent : root.colBorder
+                        border.width: 1
+
+                        Behavior on color { ColorAnimation { duration: 120 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\uf0c1"
+                            color: root.pendingImagePath !== "" ? root.colAccent : root.colTextMuted
+                            font.pixelSize: 13; font.family: root.fontMono
+                        }
+
+                        MouseArea {
+                            id: clipArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.pendingImagePath !== "") {
+                                    root.sendImage()
+                                } else {
+                                    root.grabClipboardImage()
+                                }
+                            }
+                        }
+                    }
+
                     // Push-to-talk mic button
                     Rectangle {
                         implicitWidth:  32
@@ -908,7 +1038,7 @@ PanelWindow {
                             font: inputField.font
                         }
 
-                        Keys.onReturnPressed: root.sendMessage()
+                        Keys.onReturnPressed: root.pendingImagePath !== "" ? root.sendImage() : root.sendMessage()
                         Keys.onEscapePressed: escapeClose.running = true
                     }
 
