@@ -51,13 +51,23 @@ PanelWindow {
     property bool   showModelPicker:  false
     property string activeModel:      ""
     property string activeProfile:    ""
-    property string pendingConfirmId: ""
-    property var    profileList:      []
+    property string pendingConfirmId:  ""
+    property string pendingPasswordId: ""
+    property var    profileList:       []
 
     visible: overlayVisible
 
     onOverlayVisibleChanged: {
         if (overlayVisible) {
+            inputField.forceActiveFocus()
+        }
+    }
+
+    onPendingPasswordIdChanged: {
+        if (pendingPasswordId !== "") {
+            passwordField.text = ""
+            passwordField.forceActiveFocus()
+        } else {
             inputField.forceActiveFocus()
         }
     }
@@ -108,6 +118,10 @@ PanelWindow {
                 root.isStreaming = false
             } else if (msg.type === "model_switched") {
                 root.activeModel = msg.label || msg.profile
+            } else if (msg.type === "password_required") {
+                root.pendingPasswordId = msg.id || ""
+                chatModel.append({ role: "password_required", content: "", detail: "", result: msg.id || "" })
+                chatView.positionViewAtEnd()
             } else if (msg.type === "confirm_required") {
                 root.pendingConfirmId = msg.id || ""
                 var argsStr = JSON.stringify(msg.args || {})
@@ -173,6 +187,7 @@ PanelWindow {
     }
 
     Process { id: confirmProc }
+    Process { id: passwordProc }
 
     Process {
         id: switchModelProc
@@ -193,6 +208,36 @@ PanelWindow {
     function switchModel(profile) {
         switchModelProc.command = ["python3", root.sendScript, "switch_model", profile]
         switchModelProc.running = true
+    }
+
+    function submitPassword() {
+        var pwdId = root.pendingPasswordId
+        var pwd   = passwordField.text
+        if (!pwdId) return
+        for (var i = chatModel.count - 1; i >= 0; i--) {
+            if (chatModel.get(i).role === "password_required" && chatModel.get(i).result === pwdId) {
+                chatModel.setProperty(i, "role", "password_submitted")
+                break
+            }
+        }
+        root.pendingPasswordId = ""
+        passwordProc.command = ["python3", root.sendScript, "password_submit", pwdId, pwd]
+        passwordProc.running = true
+    }
+
+    function cancelPassword() {
+        var pwdId = root.pendingPasswordId
+        if (!pwdId) return
+        for (var i = chatModel.count - 1; i >= 0; i--) {
+            if (chatModel.get(i).role === "password_required" && chatModel.get(i).result === pwdId) {
+                chatModel.setProperty(i, "role", "password_cancelled")
+                break
+            }
+        }
+        root.pendingPasswordId = ""
+        // Submit empty password so daemon unblocks
+        passwordProc.command = ["python3", root.sendScript, "password_submit", pwdId, ""]
+        passwordProc.running = true
     }
 
     function sendConfirm(confirmId, approved) {
@@ -515,9 +560,10 @@ PanelWindow {
 
                     width: chatView.width
                     visible: role === "thinking" ? root.showThinking : true
-                    height: role === "tool_call"                                                              ? toolPill.implicitHeight + 6
-                          : (role === "confirm" || role === "confirm_allowed" || role === "confirm_denied")   ? confirmBubble.height + 8
-                          : role === "thinking"                                                               ? thinkingPill.implicitHeight + 6
+                    height: role === "tool_call"                                                                                               ? toolPill.implicitHeight + 6
+                          : (role === "confirm" || role === "confirm_allowed" || role === "confirm_denied")                               ? confirmBubble.height + 8
+                          : (role === "password_required" || role === "password_submitted" || role === "password_cancelled")              ? pwdBubble.height + 8
+                          : role === "thinking"                                                                                           ? thinkingPill.implicitHeight + 6
                           : bubble.height + 8
 
                     // ── Tool call pill ────────────────────────────────────────
@@ -732,11 +778,66 @@ PanelWindow {
                         }
                     }
 
+                    // ── Sudo password bubble ─────────────────────────────────
+                    Rectangle {
+                        id: pwdBubble
+                        visible: role === "password_required" || role === "password_submitted" || role === "password_cancelled"
+                        anchors.left: parent.left
+                        anchors.leftMargin: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(pwdBubbleRow.implicitWidth + 24, chatView.width - 40)
+                        height: pwdBubbleCol.implicitHeight + 14
+                        radius: 8
+                        color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.07)
+                        border.color: root.colGold
+                        border.width: 1
+
+                        Column {
+                            id: pwdBubbleCol
+                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
+                            spacing: 6
+
+                            Row {
+                                id: pwdBubbleRow
+                                spacing: 6
+                                Text {
+                                    text: "\uf084"
+                                    color: root.colGold
+                                    font.pixelSize: 11; font.family: root.fontMono
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Text {
+                                    text: role === "password_submitted" ? "sudo password submitted"
+                                        : role === "password_cancelled"  ? "sudo password cancelled"
+                                        : "sudo password required"
+                                    color: root.colGold
+                                    font.pixelSize: 11; font.family: root.fontMono; font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            Text {
+                                visible: role === "password_submitted"
+                                text: "✓ running..."
+                                color: "#9ece6a"
+                                font.pixelSize: 11; font.family: root.fontMono; font.bold: true
+                            }
+                            Text {
+                                visible: role === "password_cancelled"
+                                text: "✗ cancelled"
+                                color: "#f7768e"
+                                font.pixelSize: 11; font.family: root.fontMono; font.bold: true
+                            }
+                        }
+                    }
+
                     // User messages: right-aligned
                     // Huginn messages: left-aligned with rune prefix
                     Rectangle {
                         id: bubble
-                        visible: role !== "tool_call" && role !== "thinking" && role !== "confirm" && role !== "confirm_allowed" && role !== "confirm_denied"
+                        visible: role !== "tool_call" && role !== "thinking"
+                              && role !== "confirm" && role !== "confirm_allowed" && role !== "confirm_denied"
+                              && role !== "password_required" && role !== "password_submitted" && role !== "password_cancelled"
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.right:      role === "user"      ? parent.right : undefined
                         anchors.left:       role === "assistant" ? parent.left  : undefined
@@ -810,6 +911,74 @@ PanelWindow {
                     font.family: root.fontMono
                     horizontalAlignment: Text.AlignHCenter
                     lineHeight: 1.6
+                }
+            }
+
+            // Password prompt panel
+            Rectangle {
+                Layout.fillWidth: true
+                visible: root.pendingPasswordId !== ""
+                implicitHeight: pwdPanelRow.implicitHeight + 18
+                color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.06)
+
+                Rectangle {
+                    anchors.top: parent.top
+                    width: parent.width; height: 1
+                    color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.5)
+                }
+
+                RowLayout {
+                    id: pwdPanelRow
+                    anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 10 }
+                    spacing: 8
+
+                    Text {
+                        text: "\uf084"
+                        color: root.colGold
+                        font.pixelSize: 13; font.family: root.fontMono
+                    }
+                    Text {
+                        text: "sudo password:"
+                        color: root.colGold
+                        font.pixelSize: 12; font.family: root.fontMono; font.bold: true
+                    }
+
+                    TextInput {
+                        id: passwordField
+                        Layout.fillWidth: true
+                        echoMode: TextInput.Password
+                        color: root.colTextPrimary
+                        font.pixelSize: 13; font.family: root.fontMono
+                        selectionColor: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.3)
+                        clip: true
+
+                        Text {
+                            anchors.fill: parent
+                            visible: passwordField.text.length === 0
+                            text: "enter password..."
+                            color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.4)
+                            font: passwordField.font
+                        }
+
+                        Keys.onReturnPressed: root.submitPassword()
+                        Keys.onEscapePressed: root.cancelPassword()
+                    }
+
+                    Rectangle {
+                        implicitWidth: pwdSubmitLabel.implicitWidth + 16; implicitHeight: 24; radius: 5
+                        color: pwdSubmitArea.containsMouse ? Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.25)
+                                                          : Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.12)
+                        border.color: root.colGold; border.width: 1
+                        Text { id: pwdSubmitLabel; anchors.centerIn: parent; text: "Submit"; color: root.colGold; font.pixelSize: 11; font.family: root.fontMono; font.bold: true }
+                        MouseArea { id: pwdSubmitArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.submitPassword() }
+                    }
+                    Rectangle {
+                        implicitWidth: pwdCancelLabel.implicitWidth + 16; implicitHeight: 24; radius: 5
+                        color: pwdCancelArea.containsMouse ? Qt.rgba(0.969, 0.467, 0.557, 0.25) : Qt.rgba(0.969, 0.467, 0.557, 0.10)
+                        border.color: "#f7768e"; border.width: 1
+                        Text { id: pwdCancelLabel; anchors.centerIn: parent; text: "Cancel"; color: "#f7768e"; font.pixelSize: 11; font.family: root.fontMono; font.bold: true }
+                        MouseArea { id: pwdCancelArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.cancelPassword() }
+                    }
                 }
             }
 
