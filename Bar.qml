@@ -113,6 +113,31 @@ PanelWindow {
 
         Rectangle { visible: bar.isPrimary; width: 1; height: 16; color: sysState.colMuted }
 
+        // Battery – primary only, hidden on desktop (batteryPercent stays 0)
+        RowLayout {
+            visible: bar.isPrimary && sysState.batteryPercent > 0
+            spacing: 4
+
+            Text {
+                text: sysState.batteryCharging ? "" : ""
+                color: sysState.batteryCharging ? sysState.colGreen
+                     : sysState.batteryPercent <= 10 ? sysState.colRed
+                     : sysState.batteryPercent <= 25 ? sysState.colYellow
+                     : sysState.colGreen
+                font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily
+            }
+            Text {
+                text: sysState.batteryPercent + "%"
+                color: sysState.batteryCharging ? sysState.colGreen
+                     : sysState.batteryPercent <= 10 ? sysState.colRed
+                     : sysState.batteryPercent <= 25 ? sysState.colYellow
+                     : sysState.colGreen
+                font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily; font.bold: true
+            }
+        }
+
+        Rectangle { visible: bar.isPrimary && sysState.batteryPercent > 0; width: 1; height: 16; color: sysState.colMuted }
+
         // Clock – every monitor, click to toggle calendar
         Text {
             id: clockText

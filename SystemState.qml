@@ -38,6 +38,9 @@ Item {
     property var  lastTxBytes:   0
     property var  lastNetTime:   0
 
+    property int  batteryPercent:  0
+    property bool batteryCharging: false
+
     // ── Helpers ───────────────────────────────────────────────────────────────
     function toRoman(num) {
         var romans = [
@@ -187,6 +190,49 @@ Item {
         onExited: vpnStatus.running = true
     }
 
+    Process {
+        id: batteryProc
+        command: ["sh", "-c", "echo $(cat /sys/class/power_supply/BAT1/capacity) $(cat /sys/class/power_supply/BAT1/status)"]
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (!data) return
+                var parts = data.trim().split(/\s+/)
+                if (parts.length >= 2) {
+                    root.batteryPercent  = parseInt(parts[0]) || 0
+                    root.batteryCharging = parts[1].toLowerCase() === 'charging'
+                }
+            }
+        }
+        Component.onCompleted: running = true
+    }
+
+    Process {
+        id: brightnessControl
+        command: ["brightnessctl", "--class=backlight", "set", "50%"]
+        function updateBrightness() {
+            var target = "50%"
+            if (root.batteryPercent <= 10 && !root.batteryCharging)       target = "20%"
+            else if (root.batteryPercent <= 25 && !root.batteryCharging)  target = "30%"
+            else if (root.batteryCharging)                                 target = "75%"
+            if (command[3] !== target) {
+                command = ["brightnessctl", "-d", "amdgpu_bl1", "set", target]
+                running = true
+            }
+        }
+    }
+
+    Process {
+        id: refreshRateManager
+        command: ["niri", "msg", "output", "eDP-1", "mode", "1920x1080@144.003"]
+        function updateRefreshRate() {
+            var mode = (root.batteryPercent <= 50 && !root.batteryCharging)
+                ? "1920x1080@60.019"
+                : "1920x1080@144.003"
+            command = ["niri", "msg", "output", "eDP-1", "mode", mode]
+            running = true
+        }
+    }
+
     // Poll all metrics every 2 s
     Timer {
         interval: 2000; running: true; repeat: true
@@ -196,6 +242,9 @@ Item {
             volProc.running   = true
             netProc.running   = true
             vpnStatus.running = true
+            batteryProc.running = true
+            brightnessControl.updateBrightness()
+            refreshRateManager.updateRefreshRate()
         }
     }
 
