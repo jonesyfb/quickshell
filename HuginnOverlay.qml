@@ -848,7 +848,7 @@ PanelWindow {
                                     ? Math.min(userText.implicitWidth + 24, chatView.width - 80)
                                     : chatView.width - 32
                         height: role === "user"
-                                    ? userText.implicitHeight + 16
+                                    ? userText.contentHeight + 16
                                     : assistantEdit.contentHeight + 16
                         radius: 8
 
@@ -870,8 +870,8 @@ PanelWindow {
                             font.family: root.fontMono
                         }
 
-                        // User messages: plain Text
-                        Text {
+                        // User messages: selectable TextEdit
+                        TextEdit {
                             id: userText
                             visible: role === "user"
                             anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 12; rightMargin: 12; topMargin: 8 }
@@ -879,8 +879,10 @@ PanelWindow {
                             color: root.colTextPrimary
                             font.pixelSize: 13
                             font.family: root.fontSans
-                            wrapMode: Text.Wrap
-                            lineHeight: 1.4
+                            wrapMode: TextEdit.Wrap
+                            readOnly: true
+                            selectByMouse: true
+                            selectionColor: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.3)
                         }
 
                         // Assistant messages: markdown via TextEdit
