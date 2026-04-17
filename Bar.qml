@@ -119,6 +119,14 @@ PanelWindow {
             spacing: 4
 
             Text {
+                text: "Bat:"
+                color: sysState.batteryCharging ? sysState.colGreen
+                     : sysState.batteryPercent <= 10 ? sysState.colRed
+                     : sysState.batteryPercent <= 25 ? sysState.colYellow
+                     : sysState.colGreen
+                font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily; font.bold: true
+            }
+            Text {
                 text: sysState.batteryCharging ? "" : ""
                 color: sysState.batteryCharging ? sysState.colGreen
                      : sysState.batteryPercent <= 10 ? sysState.colRed
