@@ -53,6 +53,7 @@ PanelWindow {
     property string activeProfile:    ""
     property string pendingConfirmId:  ""
     property string pendingPasswordId: ""
+    property string pendingImagePath:  ""
     property var    profileList:       []
 
     visible: overlayVisible
@@ -66,10 +67,17 @@ PanelWindow {
     onPendingPasswordIdChanged: {
         if (pendingPasswordId !== "") {
             passwordField.text = ""
-            passwordField.forceActiveFocus()
+            passwordFocusTimer.start()
         } else {
             inputField.forceActiveFocus()
         }
+    }
+
+    Timer {
+        id: passwordFocusTimer
+        interval: 50
+        repeat: false
+        onTriggered: passwordField.forceActiveFocus()
     }
 
     // ── Message model ─────────────────────────────────────────────────────────
@@ -188,6 +196,22 @@ PanelWindow {
 
     Process { id: confirmProc }
     Process { id: passwordProc }
+
+    // Clipboard image grabber: saves wl-paste image/png to /tmp, echoes path or "none"
+    Process {
+        id: clipImageProc
+        stdout: SplitParser {
+            onRead: function(line) {
+                var p = line.trim()
+                if (p && p !== "none") root.attachImage(p)
+            }
+        }
+    }
+
+    Process { id: imageProc
+        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
+        onExited: function(code) { root.isStreaming = false }
+    }
 
     Process {
         id: switchModelProc
