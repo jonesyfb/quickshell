@@ -40,6 +40,7 @@ Item {
 
     property int  batteryPercent:  0
     property bool batteryCharging: false
+    property string fullChargeBrightness: "100%"
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     function toRoman(num) {
@@ -213,7 +214,8 @@ Item {
             var target = "50%"
             if (root.batteryPercent <= 10 && !root.batteryCharging)       target = "20%"
             else if (root.batteryPercent <= 25 && !root.batteryCharging)  target = "30%"
-            else if (root.batteryCharging)                                 target = "75%"
+            else if (root.batteryCharging)                                 target = "100%"
+            else if (root.batteryPercent >= 95 && !root.batteryCharging)  target = root.fullChargeBrightness
             if (command[3] !== target) {
                 command = ["brightnessctl", "-d", "amdgpu_bl1", "set", target]
                 running = true
