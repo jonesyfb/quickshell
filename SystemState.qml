@@ -55,6 +55,7 @@ Item {
 
     property bool   vpnConnected: false
     property string vpnLocation:  ""
+    property bool   wg0Connected: false
 
     property real downloadSpeed: 0
     property real uploadSpeed:   0
@@ -224,6 +225,15 @@ Item {
     }
 
     Process {
+        id: wg0StatusProc
+        command: ["sh", "-c", "ip link show wg0 > /dev/null 2>&1 && echo 1 || echo 0"]
+        stdout: SplitParser {
+            onRead: function(data) { root.wg0Connected = data.trim() === "1" }
+        }
+        Component.onCompleted: running = true
+    }
+
+    Process {
         id: vpnConnect
         command: ["mullvad", "connect"]
         onExited: vpnStatus.running = true
@@ -301,6 +311,7 @@ Item {
             volProc.running        = true
             netProc.running        = true
             vpnStatus.running      = true
+            wg0StatusProc.running  = true
             nowPlayingProc.running = true
             batteryProc.running    = true
             brightnessControl.updateBrightness()

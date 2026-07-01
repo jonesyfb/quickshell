@@ -50,4 +50,9 @@ ShellRoot {
         targetScreen: Quickshell.screens[0]
         sysState: sys
     }
+
+    // Huginn raven notification popup – bottom-right, triggered via huginn-notify
+    HuginnNotification {
+        targetScreen: Quickshell.screens[0]
+    }
 }

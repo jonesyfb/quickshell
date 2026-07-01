@@ -159,6 +159,28 @@ PanelWindow {
 
         Rectangle { visible: bar.isPrimary; width: 1; height: 16; color: sysState.colMuted }
 
+        // WireGuard home tunnel
+        Row {
+            visible: bar.isPrimary
+            spacing: 4
+
+            Text {
+                text: ""
+                color: sysState.wg0Connected ? sysState.colOrange : sysState.colMuted
+                font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+            Text {
+                text: sysState.wg0Connected ? "HOME" : "WG"
+                color: sysState.wg0Connected ? sysState.colOrange : sysState.colMuted
+                font.pixelSize: sysState.fontSize; font.family: sysState.fontFamily
+                font.bold: sysState.wg0Connected
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+        }
+
+        Rectangle { visible: bar.isPrimary; width: 1; height: 16; color: sysState.colMuted }
+
         Text {
             visible: bar.isPrimary
             text: "CPU: " + sysState.cpuUsage + "%"

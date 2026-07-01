@@ -37,7 +37,7 @@ PanelWindow {
     anchors.left: true
     margins.top:  Math.max(0, Math.floor((Screen.height - implicitHeight) / 2))
     margins.left: Math.max(0, Math.floor((Screen.width  - implicitWidth)  / 2))
-    implicitWidth:  680
+    implicitWidth:  820
     implicitHeight: 540
     color: "transparent"
 
@@ -54,6 +54,10 @@ PanelWindow {
     property string pendingConfirmId:  ""
     property string pendingImagePath:  ""
     property var    profileList:       []
+    property string currentMood:      "neutral"
+    property string displayMood:      "neutral"
+
+    onCurrentMoodChanged: moodTransition.restart()
 
     visible: overlayVisible
 
@@ -73,7 +77,8 @@ PanelWindow {
         } else {
             chatModel.append({ role: "assistant", content: token, detail: "", result: "" })
         }
-        chatView.positionViewAtEnd()
+        // Defer until after QML has reflowed the delegate height from the new content
+        Qt.callLater(function() { chatView.positionViewAtEnd() })
     }
 
     readonly property string sendScript: "/home/nate/dotfiles/huginn/backend/huginn_send.py"
@@ -85,6 +90,7 @@ PanelWindow {
         chatModel.append({ role: "user", content: text, detail: "", result: "" })
         inputField.text = ""
         root.isStreaming = true
+        root.currentMood = "thinking"
         chatView.positionViewAtEnd()
 
         huginnProc.command = ["python3", root.sendScript, "chat", root.ttsEnabled ? "true" : "false", text]
@@ -93,6 +99,11 @@ PanelWindow {
 
     function clearChat() {
         huginnProc.command = ["python3", root.sendScript, "clear"]
+        huginnProc.running = true
+    }
+
+    function recoverChat() {
+        huginnProc.command = ["python3", root.sendScript, "recover"]
         huginnProc.running = true
     }
 
@@ -107,6 +118,7 @@ PanelWindow {
                 chatView.positionViewAtEnd()
             } else if (msg.type === "done") {
                 root.isStreaming = false
+                Qt.callLater(function() { chatView.positionViewAtEnd() })
             } else if (msg.type === "model_switched") {
                 root.activeModel = msg.label || msg.profile
             } else if (msg.type === "confirm_required") {
@@ -117,6 +129,8 @@ PanelWindow {
             } else if (msg.type === "thinking") {
                 chatModel.append({ role: "thinking", content: msg.content, detail: "", result: "" })
                 chatView.positionViewAtEnd()
+            } else if (msg.type === "expression") {
+                root.currentMood = msg.mood || "neutral"
             } else if (msg.type === "cleared") {
                 chatModel.clear()
             } else if (msg.type === "tool_call") {
@@ -450,6 +464,29 @@ PanelWindow {
                         }
                     }
 
+                    // Recover button
+                    MouseArea {
+                        implicitWidth:  recoverLabel.implicitWidth + 16
+                        implicitHeight: 22
+                        Layout.leftMargin: 8
+                        cursorShape: Qt.PointingHandCursor
+                        hoverEnabled: true
+                        onEntered:  recoverLabel.color = root.colAccent
+                        onExited:   recoverLabel.color = root.colTextMuted
+                        onClicked: root.recoverChat()
+
+                        Text {
+                            id: recoverLabel
+                            anchors.centerIn: parent
+                            text: "recover"
+                            color: root.colTextMuted
+                            font.pixelSize: 11
+                            font.family: root.fontMono
+
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                        }
+                    }
+
                     // Clear button
                     MouseArea {
                         implicitWidth:  clearLabel.implicitWidth + 16
@@ -481,6 +518,52 @@ PanelWindow {
                 height: 1
                 color: root.colBorder
             }
+
+            // Portrait sidebar + chat + input
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 0
+
+                // Portrait sidebar
+                Rectangle {
+                    Layout.preferredWidth: 140
+                    Layout.fillHeight: true
+                    color: Qt.rgba(0.10, 0.11, 0.16, 0.97)
+
+                    Image {
+                        id: portraitImg
+                        anchors.top: parent.top
+                        anchors.topMargin: 12
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 120
+                        height: 120
+                        source: Qt.resolvedUrl("assets/portraits/" + root.displayMood + ".png")
+                        smooth: true
+                        antialiasing: true
+                        fillMode: Image.PreserveAspectFit
+                    }
+
+                    SequentialAnimation {
+                        id: moodTransition
+                        NumberAnimation { target: portraitImg; property: "opacity"; to: 0; duration: 110; easing.type: Easing.InQuad }
+                        ScriptAction    { script: root.displayMood = root.currentMood }
+                        NumberAnimation { target: portraitImg; property: "opacity"; to: 1; duration: 180; easing.type: Easing.OutQuad }
+                    }
+                }
+
+                // Vertical divider
+                Rectangle {
+                    Layout.preferredWidth: 1
+                    Layout.fillHeight: true
+                    color: root.colBorder
+                }
+
+                // Chat + input column
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 0
 
             // Model picker panel
             Rectangle {
@@ -539,7 +622,6 @@ PanelWindow {
                     }
                 }
 
-                // Bottom divider
                 Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width; height: 1
@@ -548,15 +630,18 @@ PanelWindow {
             }
 
             // Chat log
-            ListView {
-                id: chatView
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+
+                ListView {
+                id: chatView
+                anchors.fill: parent
                 clip: true
                 model: chatModel
                 spacing: 4
                 topMargin: 12
-                bottomMargin: 12
+                bottomMargin: 20
                 leftMargin: 0
                 rightMargin: 0
 
@@ -575,6 +660,8 @@ PanelWindow {
                     required property string detail
                     required property string result
                     required property int    index
+
+                    property bool argsExpanded: false
 
                     width: chatView.width
                     visible: role === "thinking" ? root.showThinking : true
@@ -726,7 +813,7 @@ PanelWindow {
                         anchors.left: parent.left
                         anchors.leftMargin: 16
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(confirmRow.implicitWidth + 24, chatView.width - 40)
+                        width: argsExpanded ? chatView.width - 40 : Math.min(confirmRow.implicitWidth + 24, chatView.width - 40)
                         height: confirmCol.implicitHeight + 14
                         radius: 8
                         color: Qt.rgba(0.969, 0.467, 0.557, 0.07)
@@ -755,13 +842,34 @@ PanelWindow {
                                 }
                             }
 
-                            Text {
+                            Column {
                                 visible: detail !== ""
-                                text: detail
-                                color: root.colTextMuted
-                                font.pixelSize: 10; font.family: root.fontMono
                                 width: parent.width
-                                elide: Text.ElideRight
+                                spacing: 3
+
+                                Text {
+                                    id: argsText
+                                    text: detail
+                                    color: root.colTextMuted
+                                    font.pixelSize: 10; font.family: root.fontMono
+                                    width: parent.width
+                                    elide: argsExpanded ? Text.NoElide : Text.ElideRight
+                                    wrapMode: argsExpanded ? Text.Wrap : Text.NoWrap
+                                }
+
+                                Text {
+                                    text: argsExpanded ? "▴ collapse" : "▾ expand"
+                                    color: expandBtnArea.containsMouse ? root.colAccent : root.colTextMuted
+                                    font.pixelSize: 9; font.family: root.fontMono
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+                                    MouseArea {
+                                        id: expandBtnArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: argsExpanded = !argsExpanded
+                                    }
+                                }
                             }
 
                             Row {
@@ -889,8 +997,9 @@ PanelWindow {
                         TextEdit {
                             id: assistantEdit
                             visible: role === "assistant"
-                            x: 26; y: 8
-                            width: parent.width - 38
+                            anchors { left: parent.left; right: parent.right; top: parent.top
+                                      leftMargin: 26; rightMargin: 12; topMargin: 8 }
+                            height: contentHeight
                             text: role === "assistant" ? content : ""
                             textFormat: TextEdit.MarkdownText
                             readOnly: true
@@ -914,7 +1023,39 @@ PanelWindow {
                     horizontalAlignment: Text.AlignHCenter
                     lineHeight: 1.6
                 }
-            }
+            } // ListView
+
+                // Scroll-to-bottom button — appears when not at bottom
+                Rectangle {
+                    property bool atBottom: chatView.contentY + chatView.height >= chatView.contentHeight - 30
+                    visible: !atBottom && chatModel.count > 0
+                    anchors.bottom: parent.bottom
+                    anchors.right:  parent.right
+                    anchors.margins: 10
+                    width: 28; height: 28
+                    radius: 14
+                    color: scrollDownArea.containsMouse
+                        ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.25)
+                        : Qt.rgba(root.colBg.r, root.colBg.g, root.colBg.b, 0.9)
+                    border.color: root.colAccent
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "↓"
+                        color: root.colAccent
+                        font.pixelSize: 13
+                        font.family: root.fontMono
+                    }
+                    MouseArea {
+                        id: scrollDownArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Qt.callLater(function() { chatView.positionViewAtEnd() })
+                    }
+                }
+            } // Item wrapper
 
             // Divider
             Rectangle {
@@ -1136,6 +1277,8 @@ PanelWindow {
                     }
                 }
             }
+                } // inner ColumnLayout
+            } // RowLayout
         }
     }
 }
