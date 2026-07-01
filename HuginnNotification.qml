@@ -29,6 +29,17 @@ PanelWindow {
     property string bodyDisplay:  ""
     property string notifTime:    ""
 
+    function moodFor(type) {
+        if (type === "warn") return "alert"
+        if (type === "ok")   return "pleased"
+        return "thinking"
+    }
+    function accentFor(type) {
+        if (type === "warn") return "#e8b040"
+        if (type === "ok")   return "#40d880"
+        return "#9090e8"
+    }
+
     // ── IPC polling ───────────────────────────────────────────────────────────
     Process {
         id: notifyCheck
@@ -170,32 +181,41 @@ PanelWindow {
     SequentialAnimation {
         id: landAnim
         NumberAnimation {
-            target: ravenImg; property: "yOffset"
+            target: portraitBox; property: "yOffset"
             from: -12; to: 4; duration: 275
             easing.type: Easing.OutQuart
         }
         NumberAnimation {
-            target: ravenImg; property: "yOffset"
+            target: portraitBox; property: "yOffset"
             to: 0; duration: 225
             easing.type: Easing.InOutQuad
         }
     }
 
-    // Raven idle bob
+    // Raven idle bob — a slow breath, so he reads as present, not pasted on
     SequentialAnimation {
         id: bobAnim
         loops: Animation.Infinite
         running: root.notifIdle
         NumberAnimation {
-            target: ravenImg; property: "yOffset"
+            target: portraitBox; property: "yOffset"
             to: -4; duration: 1750
             easing.type: Easing.InOutSine
         }
         NumberAnimation {
-            target: ravenImg; property: "yOffset"
+            target: portraitBox; property: "yOffset"
             to: 0; duration: 1750
             easing.type: Easing.InOutSine
         }
+    }
+
+    // Ambient glow behind the portrait — slow breathing pulse while visible
+    SequentialAnimation {
+        id: glowAnim
+        loops: Animation.Infinite
+        running: root.notifVisible
+        NumberAnimation { target: portraitGlow; property: "opacity"; to: 0.45; duration: 1400; easing.type: Easing.InOutSine }
+        NumberAnimation { target: portraitGlow; property: "opacity"; to: 0.18; duration: 1400; easing.type: Easing.InOutSine }
     }
 
     // ── Visual ────────────────────────────────────────────────────────────────
@@ -206,8 +226,8 @@ PanelWindow {
         anchors.bottomMargin: 16
         anchors.rightMargin:  16
 
-        width:   bubbleCol.width + ravenImg.width - 6
-        height:  Math.max(bubbleCol.height + 18, ravenImg.height)
+        width:   bubbleCol.width + portraitBox.width - 10
+        height:  Math.max(bubbleCol.height + 18, portraitBox.height)
         opacity: 0
         visible: root.notifVisible
 
@@ -218,11 +238,26 @@ PanelWindow {
             id: bubbleCol
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 18
-            anchors.right: ravenImg.left
-            anchors.rightMargin: 6
+            anchors.right: portraitBox.left
+            anchors.rightMargin: 12
 
             width:  bubble.width
             height: bubble.height
+
+            // Speech tail — a small rotated diamond bridging bubble to beak
+            Rectangle {
+                width: 10; height: 10
+                radius: 2
+                color: bubble.color
+                border.width: 1
+                border.color: bubble.border.color
+                rotation: 45
+                anchors.right: parent.right
+                anchors.rightMargin: -5
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 14
+                z: -1
+            }
 
             Rectangle {
                 id: bubble
@@ -232,9 +267,6 @@ PanelWindow {
                 color:  "#12121c"
                 border.width: 1
                 border.color: "#2e2e50"
-
-                // Flatten bottom-right corner
-                layer.enabled: true
 
                 Column {
                     id: bubbleContent
@@ -271,9 +303,7 @@ PanelWindow {
                                 font.pixelSize: 9
                                 font.weight: Font.Medium
                                 font.letterSpacing: 0.6
-                                color: root.notifType === "warn" ? "#e8b040"
-                                     : root.notifType === "ok"   ? "#40d880"
-                                     :                             "#9090e8"
+                                color: root.accentFor(root.notifType)
                             }
                         }
 
@@ -340,21 +370,42 @@ PanelWindow {
             }
         }
 
-        // Raven image
-        Image {
-            id: ravenImg
+        // Raven portrait — mood-matched, ringed and lit to the notification's type
+        Item {
+            id: portraitBox
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
-
-            width:            140
-            height:           140
-            fillMode:         Image.PreserveAspectFit
-            source:           Qt.resolvedUrl("assets/Huginn_v1.png")
-            smooth:           false
-            antialiasing:     false
+            width:  108
+            height: 108
 
             property real yOffset: 0
-            transform: Translate { y: ravenImg.yOffset }
+            transform: Translate { y: portraitBox.yOffset }
+
+            // Ambient glow, faked with stacked falloff rings — color-coded to type
+            Item {
+                id: portraitGlow
+                anchors.fill: parent
+                opacity: 0.18
+                Rectangle { anchors.centerIn: parent; width: portraitBox.width + 44; height: width; radius: width / 2; color: root.accentFor(root.notifType); opacity: 0.10 }
+                Rectangle { anchors.centerIn: parent; width: portraitBox.width + 24; height: width; radius: width / 2; color: root.accentFor(root.notifType); opacity: 0.16 }
+                Rectangle { anchors.centerIn: parent; width: portraitBox.width + 8;  height: width; radius: width / 2; color: root.accentFor(root.notifType); opacity: 0.22 }
+            }
+
+            Image {
+                anchors.fill: parent
+                fillMode:     Image.PreserveAspectFit
+                source:       Qt.resolvedUrl("assets/portraits/circle/" + root.moodFor(root.notifType) + ".png")
+                smooth:       true
+                antialiasing: true
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: width / 2
+                color:  "transparent"
+                border.width: 2
+                border.color: root.accentFor(root.notifType)
+            }
         }
     }
 }

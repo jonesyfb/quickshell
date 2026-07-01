@@ -75,6 +75,16 @@ Item {
         Component.onCompleted: running = true
     }
 
+    // Set to e.g. "80%" to pin brightness; "" to let auto-control run
+    property string brightnessOverride: ""
+    property string lastAutoTarget: ""
+    property bool   userBrightnessOverride: false
+
+    onBatteryChargingChanged: {
+        userBrightnessOverride = false
+        lastAutoTarget = ""
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
     function toRoman(num) {
         var romans = [
@@ -282,14 +292,39 @@ Item {
     }
 
     Process {
+        id: brightnessReader
+        command: ["sh", "-c", "echo $(cat /sys/class/backlight/amdgpu_bl1/brightness) $(cat /sys/class/backlight/amdgpu_bl1/max_brightness)"]
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (!data) { brightnessControl.updateBrightness(); return }
+                if (root.lastAutoTarget === "") { brightnessControl.updateBrightness(); return }
+                var parts   = data.trim().split(/\s+/)
+                var current = parseInt(parts[0])
+                var maxVal  = parseInt(parts[1])
+                if (isNaN(current) || isNaN(maxVal) || maxVal <= 0) { brightnessControl.updateBrightness(); return }
+                var currentPct = Math.round(current * 100 / maxVal)
+                var targetPct  = parseInt(root.lastAutoTarget)
+                if (Math.abs(currentPct - targetPct) > 5) {
+                    root.userBrightnessOverride = true
+                } else {
+                    brightnessControl.updateBrightness()
+                }
+            }
+        }
+    }
+
+    Process {
         id: brightnessControl
         command: ["brightnessctl", "--class=backlight", "set", "50%"]
         function updateBrightness() {
+            if (root.brightnessOverride !== "") return
+            if (root.userBrightnessOverride) return
             var target = "50%"
             if (root.batteryPercent <= 10 && !root.batteryCharging)       target = "20%"
             else if (root.batteryPercent <= 25 && !root.batteryCharging)  target = "30%"
             else if (root.batteryCharging)                                 target = "100%"
             else if (root.batteryPercent >= 95 && !root.batteryCharging)  target = root.fullChargeBrightness
+            root.lastAutoTarget = target
             if (command[3] !== target) {
                 command = ["brightnessctl", "-d", "amdgpu_bl1", "set", target]
                 running = true
@@ -323,7 +358,7 @@ Item {
             nowPlayingProc.running = true
             if (root.hasBacklight) {
                 batteryProc.running = true
-                brightnessControl.updateBrightness()
+                brightnessReader.running = true
                 refreshRateManager.updateRefreshRate()
             }
         }
