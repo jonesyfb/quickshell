@@ -66,6 +66,14 @@ Item {
     property int  batteryPercent:  0
     property bool batteryCharging: false
     property string fullChargeBrightness: "100%"
+    property bool hasBacklight: false
+
+    Process {
+        id: backlightCheck
+        command: ["sh", "-c", "test -d /sys/class/backlight/amdgpu_bl1 && echo 1 || echo 0"]
+        stdout: SplitParser { onRead: function(data) { root.hasBacklight = data.trim() === "1" } }
+        Component.onCompleted: running = true
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
     function toRoman(num) {
@@ -313,9 +321,11 @@ Item {
             vpnStatus.running      = true
             wg0StatusProc.running  = true
             nowPlayingProc.running = true
-            batteryProc.running    = true
-            brightnessControl.updateBrightness()
-            refreshRateManager.updateRefreshRate()
+            if (root.hasBacklight) {
+                batteryProc.running = true
+                brightnessControl.updateBrightness()
+                refreshRateManager.updateRefreshRate()
+            }
         }
     }
 
