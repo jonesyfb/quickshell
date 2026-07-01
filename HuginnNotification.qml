@@ -14,9 +14,7 @@ PanelWindow {
     exclusionMode:           ExclusionMode.Ignore
 
     anchors.bottom: true
-    anchors.right:  true
-    // Shift left to clear the 380px chat panel when it's open
-    margins.right: root.chatOverlayOpen ? 390 : 0
+    anchors.left:   true
 
     implicitWidth:  root.notifVisible ? 450 : 0
     implicitHeight: root.notifVisible ? 250 : 0
@@ -24,21 +22,12 @@ PanelWindow {
 
     // ── State ─────────────────────────────────────────────────────────────────
     property bool   notifVisible: false
-    property bool   chatOverlayOpen: false
     property bool   notifIdle:    false
     property string notifType:    "info"
     property string notifTitle:   "huginn"
     property string notifBody:    ""
     property string bodyDisplay:  ""
     property string notifTime:    ""
-
-    // ── Track chat overlay state ──────────────────────────────────────────────
-    Process {
-        id: overlayCheck
-        command: ["sh", "-c", "[ -f /tmp/huginn-visible ] && echo 1 || echo 0"]
-        stdout: SplitParser { onRead: function(d) { root.chatOverlayOpen = d.trim() === "1" } }
-    }
-    Timer { interval: 300; running: true; repeat: true; onTriggered: overlayCheck.running = true }
 
     // ── IPC polling ───────────────────────────────────────────────────────────
     Process {
@@ -159,7 +148,7 @@ PanelWindow {
         }
         NumberAnimation {
             target: slideOffset; property: "x"
-            to: 100; duration: 220
+            to: -100; duration: 220
             easing.type: Easing.InQuad
         }
         onFinished: {
@@ -206,9 +195,9 @@ PanelWindow {
     Item {
         id: notifBox
         anchors.bottom: parent.bottom
-        anchors.right:  parent.right
+        anchors.left:   parent.left
         anchors.bottomMargin: 16
-        anchors.rightMargin:  16
+        anchors.leftMargin:   16
 
         width:   bubbleCol.width + ravenImg.width - 6
         height:  Math.max(bubbleCol.height + 18, ravenImg.height)
