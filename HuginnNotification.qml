@@ -211,8 +211,8 @@ PanelWindow {
             id: bubbleCol
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 18
-            anchors.right: ravenImg.left
-            anchors.rightMargin: 6
+            anchors.left: ravenImg.right
+            anchors.leftMargin: 6
 
             width:  bubble.width
             height: bubble.height
@@ -336,7 +336,7 @@ PanelWindow {
         // Raven image
         Image {
             id: ravenImg
-            anchors.right:  parent.right
+            anchors.left:   parent.left
             anchors.bottom: parent.bottom
 
             width:            140
@@ -345,6 +345,7 @@ PanelWindow {
             source:           Qt.resolvedUrl("assets/Huginn_v1.png")
             smooth:           false
             antialiasing:     false
+            mirror:           true
 
             property real yOffset: 0
             transform: Translate { y: ravenImg.yOffset }
