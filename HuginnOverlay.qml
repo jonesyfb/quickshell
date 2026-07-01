@@ -4,67 +4,50 @@ import Quickshell.Io
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import QtQuick.Window
 
-// Huginn chat overlay. Toggled by /tmp/huginn-visible flag file.
-// Communicates with the Python daemon via socat on the Unix socket.
+// Huginn v2 chat overlay — right-anchored panel, mint green accent.
+// Toggled by /tmp/huginn-visible flag file (same as v1).
+// IPC via huginn_send.py → Unix socket.
 PanelWindow {
     id: root
 
     required property var targetScreen
 
-    // ── Palette (Midnight Raven) ──────────────────────────────────────────────
-    readonly property color colBg:          "#1a1b26"
-    readonly property color colSurface:     "#24283b"
-    property color colAccent:      "#89ddff"
-    property color colGold:        "#f7c95e"
-    readonly property color colTextPrimary: "#c0caf5"
-    readonly property color colTextMuted:   "#a9b1d6"
-    readonly property color colBorder:      "#414868"
-    readonly property string fontMono: "JetBrainsMono Nerd Font"
-    readonly property string fontSans: "JetBrainsMono Nerd Font"
+    // ── Palette ───────────────────────────────────────────────────────────────
+    readonly property color colBg:      "#1a1b26"
+    readonly property color colSurface: "#24283b"
+    readonly property color colBorder:  "#3b4261"
+    readonly property color colText:    "#c0caf5"
+    readonly property color colMuted:   "#a9b1d6"
+    readonly property color colDim:     "#565f89"
+    readonly property color colMint:    "#7ed9a3"
+    readonly property color colOrange:  "#ff9e64"
+    readonly property color colRed:     "#f7768e"
+    readonly property string font:      "JetBrainsMono Nerd Font"
 
-    // ── Window config ─────────────────────────────────────────────────────────
+    // ── Window ────────────────────────────────────────────────────────────────
     screen: targetScreen
-    WlrLayershell.namespace: "huginnOverlay"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.overlayVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.namespace:   "huginnOverlay"
+    WlrLayershell.layer:       WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: overlayVisible ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
-    // Center via anchor+margin — PanelWindow has no x/y
-    // Screen attached property reads dimensions from the window itself
-    anchors.top:  true
-    anchors.left: true
-    margins.top:  Math.max(0, Math.floor((Screen.height - implicitHeight) / 2))
-    margins.left: Math.max(0, Math.floor((Screen.width  - implicitWidth)  / 2))
-    implicitWidth:  820
-    implicitHeight: 540
+    anchors.right:  true
+    anchors.top:    true
+    anchors.bottom: true
+    implicitWidth:  overlayVisible ? 380 : 0
     color: "transparent"
 
     // ── State ─────────────────────────────────────────────────────────────────
-    property bool   overlayVisible:   false
-    property bool   isStreaming:      false
-    property bool   isConnected:      false
-    property bool   isRecording:      false
-    property bool   ttsEnabled:       false
-    property bool   showThinking:     false
-    property bool   showModelPicker:  false
-    property string activeModel:      ""
-    property string activeProfile:    ""
-    property string pendingConfirmId:  ""
-    property string pendingImagePath:  ""
-    property var    profileList:       []
-    property string currentMood:      "neutral"
-    property string displayMood:      "neutral"
-
-    onCurrentMoodChanged: moodTransition.restart()
+    property bool   overlayVisible:  false
+    property bool   isStreaming:     false
+    property bool   isConnected:     false
+    property string pendingConfirmId: ""
 
     visible: overlayVisible
 
     onOverlayVisibleChanged: {
-        if (overlayVisible) {
-            inputField.forceActiveFocus()
-        }
+        if (overlayVisible) inputField.forceActiveFocus()
     }
 
     // ── Message model ─────────────────────────────────────────────────────────
@@ -77,23 +60,20 @@ PanelWindow {
         } else {
             chatModel.append({ role: "assistant", content: token, detail: "", result: "" })
         }
-        // Defer until after QML has reflowed the delegate height from the new content
         Qt.callLater(function() { chatView.positionViewAtEnd() })
     }
 
+    // ── IPC ───────────────────────────────────────────────────────────────────
     readonly property string sendScript: "/home/nate/dotfiles/huginn/backend/huginn_send.py"
 
     function sendMessage() {
         var text = inputField.text.trim()
         if (!text || root.isStreaming) return
-
         chatModel.append({ role: "user", content: text, detail: "", result: "" })
         inputField.text = ""
         root.isStreaming = true
-        root.currentMood = "thinking"
         chatView.positionViewAtEnd()
-
-        huginnProc.command = ["python3", root.sendScript, "chat", root.ttsEnabled ? "true" : "false", text]
+        huginnProc.command = ["python3", root.sendScript, "chat", "false", text]
         huginnProc.running = true
     }
 
@@ -119,23 +99,16 @@ PanelWindow {
             } else if (msg.type === "done") {
                 root.isStreaming = false
                 Qt.callLater(function() { chatView.positionViewAtEnd() })
-            } else if (msg.type === "model_switched") {
-                root.activeModel = msg.label || msg.profile
             } else if (msg.type === "confirm_required") {
                 root.pendingConfirmId = msg.id || ""
-                var argsStr = JSON.stringify(msg.args || {})
-                chatModel.append({ role: "confirm", content: msg.tool, detail: argsStr, result: msg.id || "" })
+                chatModel.append({ role: "confirm", content: msg.tool, detail: JSON.stringify(msg.args || {}), result: msg.id || "" })
                 chatView.positionViewAtEnd()
-            } else if (msg.type === "thinking") {
-                chatModel.append({ role: "thinking", content: msg.content, detail: "", result: "" })
-                chatView.positionViewAtEnd()
-            } else if (msg.type === "expression") {
-                root.currentMood = msg.mood || "neutral"
             } else if (msg.type === "cleared") {
                 chatModel.clear()
+            } else if (msg.type === "recovered") {
+                root.isStreaming = false
             } else if (msg.type === "tool_call") {
-                var argsStr = JSON.stringify(msg.args || {})
-                chatModel.append({ role: "tool_call", content: msg.tool, detail: argsStr, result: "" })
+                chatModel.append({ role: "tool_call", content: msg.tool, detail: JSON.stringify(msg.args || {}), result: "" })
                 chatView.positionViewAtEnd()
             } else if (msg.type === "tool_result") {
                 for (var i = chatModel.count - 1; i >= 0; i--) {
@@ -149,81 +122,7 @@ PanelWindow {
                 root.isStreaming = false
                 root.isConnected = false
             }
-        } catch(e) {
-            console.error("Huginn parse error:", e, line)
-        }
-    }
-
-    // ── IPC: one-shot process per message ────────────────────────────────────
-    Process {
-        id: huginnProc
-        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
-        onExited: function(code) { root.isStreaming = false }
-    }
-
-    // ── Voice: record + send ──────────────────────────────────────────────────
-    Process {
-        id: recordProc
-        command: ["arecord", "-f", "S16_LE", "-r", "16000", "-c", "1", "-q", "/tmp/huginn-voice.wav"]
-        onExited: function(code) {
-            if (root.isRecording) {
-                root.isRecording = false
-                if (!root.isStreaming) {
-                    root.isStreaming = true
-                    voiceProc.command = [
-                        "python3", root.sendScript, "voice_file",
-                        "/tmp/huginn-voice.wav",
-                        root.ttsEnabled ? "true" : "false"
-                    ]
-                    voiceProc.running = true
-                }
-            }
-        }
-    }
-
-    Process {
-        id: voiceProc
-        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
-        onExited: function(code) { root.isStreaming = false }
-    }
-
-    Process { id: confirmProc }
-
-    // Grabs image/png from clipboard → /tmp/huginn-img-TIMESTAMP.png, echoes path or "none"
-    Process {
-        id: clipImageProc
-        stdout: SplitParser {
-            onRead: function(line) {
-                var p = line.trim()
-                if (p && p !== "none") root.attachImage(p)
-            }
-        }
-    }
-
-    Process { id: imageProc
-        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
-        onExited: function(code) { root.isStreaming = false }
-    }
-
-    Process {
-        id: switchModelProc
-        stdout: SplitParser {
-            onRead: function(line) {
-                try {
-                    var msg = JSON.parse(line)
-                    if (msg.type === "model_switched") {
-                        root.activeModel   = msg.label || msg.profile
-                        root.activeProfile = msg.profile
-                        root.showModelPicker = false
-                    }
-                } catch(e) {}
-            }
-        }
-    }
-
-    function switchModel(profile) {
-        switchModelProc.command = ["python3", root.sendScript, "switch_model", profile]
-        switchModelProc.running = true
+        } catch(e) {}
     }
 
     function sendConfirm(confirmId, approved) {
@@ -233,425 +132,188 @@ PanelWindow {
                 break
             }
         }
-        root.isStreaming = true
+        root.isStreaming = approved
         confirmProc.command = ["python3", root.sendScript, "confirm", confirmId, approved ? "true" : "false"]
         confirmProc.running = true
         root.pendingConfirmId = ""
     }
 
-    function attachImage(path) {
-        root.pendingImagePath = path
-        // Show preview in input area — caption is whatever's in inputField
-        chatView.positionViewAtEnd()
+    Process {
+        id: huginnProc
+        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
+        onExited: function(code) { root.isStreaming = false }
     }
 
-    function sendImage() {
-        var path = root.pendingImagePath
-        if (!path || root.isStreaming) return
-        var caption = inputField.text.trim()
-        chatModel.append({ role: "image_sent", content: caption || "Image", detail: path, result: "" })
-        inputField.text = ""
-        root.pendingImagePath = ""
-        root.isStreaming = true
-        chatView.positionViewAtEnd()
-        imageProc.command = ["python3", root.sendScript, "image_file", path, caption, root.ttsEnabled ? "true" : "false"]
-        imageProc.running = true
+    Process { id: confirmProc
+        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
+        onExited: function(code) { root.isStreaming = false }
     }
 
-    function grabClipboardImage() {
-        var ts = Date.now()
-        var dest = "/tmp/huginn-img-" + ts + ".png"
-        clipImageProc.command = [
-            "sh", "-c",
-            "wl-paste --list-types 2>/dev/null | grep -qi 'image/' " +
-            "&& wl-paste --type image/png > " + dest + " 2>/dev/null " +
-            "&& echo " + dest + " || echo none"
-        ]
-        clipImageProc.running = true
-    }
-
-    // ── Ping to track connection status ───────────────────────────────────────
     Process {
         id: pingProc
         command: ["python3", root.sendScript, "ping"]
-
         stdout: SplitParser {
             onRead: function(line) {
                 try {
                     var msg = JSON.parse(line)
-                    if (msg.type === "pong") {
-                        root.isConnected = true
-                        if (msg.label)    root.activeModel  = msg.label
-                        if (msg.profile)  root.activeProfile = msg.profile
-                        if (msg.profiles) root.profileList  = msg.profiles
-                    }
+                    if (msg.type === "pong") root.isConnected = true
                 } catch(e) {}
             }
         }
-
-        onExited: function(code) {
-            if (code !== 0) root.isConnected = false
-        }
+        onExited: function(code) { if (code !== 0) root.isConnected = false }
     }
 
-    Timer {
-        interval: 3000; running: true; repeat: true
-        onTriggered: pingProc.running = true
-    }
+    Timer { interval: 3000; running: true; repeat: true; onTriggered: pingProc.running = true }
 
-    Process {
-        id: escapeClose
-        command: ["sh", "-c", "rm -f /tmp/huginn-visible"]
-    }
-
-    // ── Theme: poll active theme ──────────────────────────────────────────────
-    Process {
-        id: themeReader
-        command: ["cat", "/home/nate/.config/huginn/current-theme.json"]
-        stdout: SplitParser {
-            onRead: function(line) {
-                if (!line.trim()) return
-                try {
-                    var t = JSON.parse(line)
-                    if (t.accent) root.colAccent = t.accent
-                    if (t.gold)   root.colGold   = t.gold
-                } catch(e) {}
-            }
-        }
-    }
-    Timer {
-        interval: 500; running: true; repeat: true
-        onTriggered: themeReader.running = true
-    }
-
-    // ── Visibility: flag-file toggle ──────────────────────────────────────────
     Process {
         id: visibilityChecker
         command: ["sh", "-c", "[ -f /tmp/huginn-visible ] && echo 'true' || echo 'false'"]
-        stdout: SplitParser {
-            onRead: function(data) { root.overlayVisible = (data.trim() === "true") }
-        }
+        stdout: SplitParser { onRead: function(d) { root.overlayVisible = (d.trim() === "true") } }
     }
+    Timer { interval: 100; running: true; repeat: true; onTriggered: visibilityChecker.running = true }
 
-    Timer {
-        interval: 100; running: true; repeat: true
-        onTriggered: visibilityChecker.running = true
-    }
+    Process { id: escapeClose; command: ["sh", "-c", "rm -f /tmp/huginn-visible"] }
 
     // ── UI ────────────────────────────────────────────────────────────────────
-    DropArea {
-        anchors.fill: parent
-        keys: ["text/uri-list"]
-        onDropped: function(drop) {
-            var urls = drop.urls
-            for (var i = 0; i < urls.length; i++) {
-                var path = urls[i].toString().replace("file://", "")
-                if (/\.(png|jpg|jpeg|webp|gif|bmp)$/i.test(path)) {
-                    root.attachImage(path)
-                    break
-                }
-            }
-        }
-    }
-
     Rectangle {
         anchors.fill: parent
-        radius: 14
-        color: Qt.rgba(0.102, 0.106, 0.149, 0.94)
-        border.color: root.isConnected ? root.colAccent : root.colBorder
+        color: root.colBg
+        border.color: root.colBorder
         border.width: 1
 
-        clip: true
+        // Mint left accent bar
+        Rectangle {
+            anchors.left:   parent.left
+            anchors.top:    parent.top
+            anchors.bottom: parent.bottom
+            width: 3
+            color: root.colMint
+            opacity: root.isConnected ? 1.0 : 0.3
+            Behavior on opacity { NumberAnimation { duration: 300 } }
+        }
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 0
+            anchors.leftMargin: 3
             spacing: 0
 
             // Header
             Rectangle {
                 Layout.fillWidth: true
-                height: 42
-                color: Qt.rgba(0.141, 0.157, 0.220, 0.95)
+                height: 46
+                color: "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    spacing: 12
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 14
+                    spacing: 8
 
-                    // Rune + name
-                    RowLayout {
-                        spacing: 8
+                    Text {
+                        text: "ᚹ"
+                        color: root.colMint
+                        font.pixelSize: 17
+                        font.family: root.font
+                    }
+                    Text {
+                        text: "HUGINN"
+                        color: root.colText
+                        font.pixelSize: 12
+                        font.family: root.font
+                        font.bold: true
+                        font.letterSpacing: 2
+                    }
 
-                        Text {
-                            text: "ᚱ"
-                            color: root.colGold
-                            font.pixelSize: 18
-                            font.family: root.fontMono
-                            style: Text.Normal
-                        }
+                    Rectangle {
+                        implicitWidth: liveDot.implicitWidth + liveLabel.implicitWidth + 16
+                        implicitHeight: 18
+                        radius: 3
+                        color: root.isConnected
+                            ? Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.1)
+                            : Qt.rgba(root.colRed.r, root.colRed.g, root.colRed.b, 0.1)
+                        border.color: root.isConnected
+                            ? Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.3)
+                            : Qt.rgba(root.colRed.r, root.colRed.g, root.colRed.b, 0.3)
+                        border.width: 1
 
-                        Text {
-                            text: "HUGINN"
-                            color: root.colTextPrimary
-                            font.pixelSize: 13
-                            font.family: root.fontMono
-                            font.bold: true
-                            font.letterSpacing: 2
-                        }
-
-                        Rectangle {
-                            visible: root.activeModel !== ""
-                            implicitWidth: modelPickerLabel.implicitWidth + 12
-                            implicitHeight: 18
-                            radius: 4
-                            color: root.showModelPicker
-                                ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.12)
-                                : modelPickerBtn.containsMouse ? Qt.rgba(1,1,1,0.05) : "transparent"
-                            border.color: root.showModelPicker ? root.colAccent : "transparent"
-                            border.width: 1
-                            Layout.alignment: Qt.AlignVCenter
-
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 4
                             Text {
-                                id: modelPickerLabel
-                                anchors.centerIn: parent
-                                text: root.activeModel + "  ▾"
-                                color: root.showModelPicker ? root.colAccent : root.colTextMuted
-                                font.pixelSize: 10
-                                font.family: root.fontMono
+                                id: liveDot
+                                text: "●"
+                                color: root.isConnected ? root.colMint : root.colRed
+                                font.pixelSize: 7
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                SequentialAnimation on opacity {
+                                    running: root.isStreaming
+                                    loops: Animation.Infinite
+                                    NumberAnimation { to: 0.3; duration: 500; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: 1.0; duration: 500; easing.type: Easing.InOutSine }
+                                }
                             }
-                            MouseArea {
-                                id: modelPickerBtn
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showModelPicker = !root.showModelPicker
+                            Text {
+                                id: liveLabel
+                                text: root.isStreaming ? "thinking" : root.isConnected ? "live" : "offline"
+                                color: root.isConnected ? root.colMint : root.colRed
+                                font.pixelSize: 10
+                                font.family: root.font
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                     }
 
                     Item { Layout.fillWidth: true }
 
-                    // Status dot
-                    Row {
-                        spacing: 6
-
-                        Rectangle {
-                            width: 7; height: 7
-                            radius: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: root.isStreaming  ? root.colGold
-                                 : root.isConnected  ? root.colAccent
-                                 : "#f7768e"
-
-                            SequentialAnimation on opacity {
-                                running: root.isStreaming
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.3; duration: 600; easing.type: Easing.InOutSine }
-                                NumberAnimation { to: 1.0; duration: 600; easing.type: Easing.InOutSine }
-                            }
-                        }
-
-                        Text {
-                            text: root.isStreaming  ? "thinking..."
-                                : root.isConnected  ? "ready"
-                                : "offline"
-                            color: root.colTextMuted
-                            font.pixelSize: 11
-                            font.family: root.fontMono
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
+                    // Recover
+                    Text {
+                        text: "↺"
+                        color: recoverArea.containsMouse ? root.colMint : root.colDim
+                        font.pixelSize: 15
+                        font.family: root.font
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                        MouseArea { id: recoverArea; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.recoverChat() }
                     }
 
-                    // Recover button
-                    MouseArea {
-                        implicitWidth:  recoverLabel.implicitWidth + 16
-                        implicitHeight: 22
-                        Layout.leftMargin: 8
-                        cursorShape: Qt.PointingHandCursor
-                        hoverEnabled: true
-                        onEntered:  recoverLabel.color = root.colAccent
-                        onExited:   recoverLabel.color = root.colTextMuted
-                        onClicked: root.recoverChat()
-
-                        Text {
-                            id: recoverLabel
-                            anchors.centerIn: parent
-                            text: "recover"
-                            color: root.colTextMuted
-                            font.pixelSize: 11
-                            font.family: root.fontMono
-
-                            Behavior on color { ColorAnimation { duration: 120 } }
-                        }
+                    // Clear
+                    Text {
+                        text: "✕"
+                        color: clearArea.containsMouse ? root.colOrange : root.colDim
+                        font.pixelSize: 13
+                        font.family: root.font
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                        MouseArea { id: clearArea; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.clearChat() }
                     }
 
-                    // Clear button
-                    MouseArea {
-                        implicitWidth:  clearLabel.implicitWidth + 16
-                        implicitHeight: 22
-                        Layout.leftMargin: 8
-                        cursorShape: Qt.PointingHandCursor
-                        hoverEnabled: true
-                        onEntered:  clearLabel.color = root.colAccent
-                        onExited:   clearLabel.color = root.colTextMuted
-                        onClicked: root.clearChat()
-
-                        Text {
-                            id: clearLabel
-                            anchors.centerIn: parent
-                            text: "clear"
-                            color: root.colTextMuted
-                            font.pixelSize: 11
-                            font.family: root.fontMono
-
-                            Behavior on color { ColorAnimation { duration: 120 } }
-                        }
+                    // Close panel
+                    Text {
+                        text: "›"
+                        color: closeArea.containsMouse ? root.colText : root.colDim
+                        font.pixelSize: 18
+                        font.family: root.font
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                        MouseArea { id: closeArea; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: escapeClose.running = true }
                     }
                 }
             }
 
-            // Divider
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: root.colBorder
-            }
-
-            // Portrait sidebar + chat + input
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 0
-
-                // Portrait sidebar
-                Rectangle {
-                    Layout.preferredWidth: 140
-                    Layout.fillHeight: true
-                    color: Qt.rgba(0.10, 0.11, 0.16, 0.97)
-
-                    Image {
-                        id: portraitImg
-                        anchors.top: parent.top
-                        anchors.topMargin: 12
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 120
-                        height: 120
-                        source: Qt.resolvedUrl("assets/portraits/" + root.displayMood + ".png")
-                        smooth: true
-                        antialiasing: true
-                        fillMode: Image.PreserveAspectFit
-                    }
-
-                    SequentialAnimation {
-                        id: moodTransition
-                        NumberAnimation { target: portraitImg; property: "opacity"; to: 0; duration: 110; easing.type: Easing.InQuad }
-                        ScriptAction    { script: root.displayMood = root.currentMood }
-                        NumberAnimation { target: portraitImg; property: "opacity"; to: 1; duration: 180; easing.type: Easing.OutQuad }
-                    }
-                }
-
-                // Vertical divider
-                Rectangle {
-                    Layout.preferredWidth: 1
-                    Layout.fillHeight: true
-                    color: root.colBorder
-                }
-
-                // Chat + input column
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: 0
-
-            // Model picker panel
-            Rectangle {
-                Layout.fillWidth: true
-                visible: root.showModelPicker
-                implicitHeight: pickerFlow.implicitHeight + 16
-                color: Qt.rgba(0.10, 0.11, 0.15, 0.97)
-                border.color: root.colBorder
-                border.width: 0
-
-                Flow {
-                    id: pickerFlow
-                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
-                    spacing: 6
-
-                    Repeater {
-                        model: root.profileList
-                        delegate: Rectangle {
-                            required property var modelData
-                            property bool isCurrent: modelData.id === root.activeProfile
-                            property bool unavailable: !modelData.available
-
-                            implicitWidth: pLabel.implicitWidth + 18
-                            implicitHeight: 24
-                            radius: 5
-                            color: isCurrent
-                                ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.15)
-                                : unavailable ? Qt.rgba(1,1,1,0.02)
-                                : pArea.containsMouse ? Qt.rgba(1,1,1,0.07) : Qt.rgba(1,1,1,0.04)
-                            border.color: isCurrent ? root.colAccent
-                                        : unavailable ? Qt.rgba(root.colBorder.r, root.colBorder.g, root.colBorder.b, 0.4)
-                                        : root.colBorder
-                            border.width: 1
-
-                            Text {
-                                id: pLabel
-                                anchors.centerIn: parent
-                                text: modelData.label + (unavailable ? " ✕" : "")
-                                color: isCurrent   ? root.colAccent
-                                     : unavailable ? Qt.rgba(root.colTextMuted.r, root.colTextMuted.g, root.colTextMuted.b, 0.35)
-                                     : root.colTextMuted
-                                font.pixelSize: 10
-                                font.family: root.fontMono
-                                font.bold: isCurrent
-                            }
-
-                            MouseArea {
-                                id: pArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: unavailable ? Qt.ForbiddenCursor : Qt.PointingHandCursor
-                                enabled: !unavailable && !isCurrent
-                                onClicked: root.switchModel(modelData.id)
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    width: parent.width; height: 1
-                    color: root.colBorder
-                }
-            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: root.colBorder }
 
             // Chat log
-            Item {
+            ListView {
+                id: chatView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-
-                ListView {
-                id: chatView
-                anchors.fill: parent
                 clip: true
                 model: chatModel
-                spacing: 4
-                topMargin: 12
-                bottomMargin: 20
-                leftMargin: 0
-                rightMargin: 0
+                spacing: 2
+                topMargin: 14
+                bottomMargin: 14
 
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AsNeeded
-                    contentItem: Rectangle {
-                        implicitWidth: 3
-                        radius: 2
-                        color: root.colBorder
-                    }
+                    contentItem: Rectangle { implicitWidth: 2; radius: 1; color: root.colBorder }
                 }
 
                 delegate: Item {
@@ -661,163 +323,76 @@ PanelWindow {
                     required property string result
                     required property int    index
 
-                    property bool argsExpanded: false
-
                     width: chatView.width
-                    visible: role === "thinking" ? root.showThinking : true
-                    height: role === "tool_call"                                                            ? toolPill.implicitHeight + 6
-                          : (role === "confirm" || role === "confirm_allowed" || role === "confirm_denied") ? confirmBubble.height + 8
-                          : role === "image_sent"                                                          ? imageBubble.height + 8
-                          : role === "thinking"                                                             ? thinkingPill.implicitHeight + 6
-                          : bubble.height + 8
+                    height: roleHeight() + 8
 
-                    // ── Tool call pill ────────────────────────────────────────
-                    Rectangle {
-                        id: toolPill
-                        visible: role === "tool_call"
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitHeight: toolCol.implicitHeight + 10
-                        radius: 6
-                        color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.07)
-                        border.color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.3)
-                        border.width: 1
-
-                        Column {
-                            id: toolCol
-                            anchors { left: parent.left; right: parent.right; top: parent.top }
-                            anchors.margins: 10
-                            spacing: 4
-
-                            // Tool name + args header
-                            Row {
-                                spacing: 6
-                                width: parent.width
-                                Text {
-                                    text: "⚙"
-                                    color: root.colGold
-                                    font.pixelSize: 10
-                                    font.family: root.fontMono
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: content
-                                    color: root.colGold
-                                    font.pixelSize: 11
-                                    font.family: root.fontMono
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: detail
-                                    color: root.colTextMuted
-                                    font.pixelSize: 10
-                                    font.family: root.fontMono
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    elide: Text.ElideRight
-                                    width: Math.min(implicitWidth, toolPill.width - 120)
-                                }
-                            }
-
-                            // Output block
-                            Rectangle {
-                                visible: result.length > 0
-                                width: parent.width
-                                height: Math.min(outputText.implicitHeight + 12, 200)
-                                radius: 4
-                                color: Qt.rgba(0, 0, 0, 0.25)
-                                border.color: Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.15)
-                                border.width: 1
-                                clip: true
-
-                                Flickable {
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    contentHeight: outputText.implicitHeight
-                                    clip: true
-                                    ScrollBar.vertical: ScrollBar {
-                                        policy: ScrollBar.AsNeeded
-                                        contentItem: Rectangle { implicitWidth: 2; radius: 1; color: root.colBorder }
-                                    }
-
-                                    Text {
-                                        id: outputText
-                                        width: parent.width
-                                        text: result
-                                        color: "#a9b1d6"
-                                        font.pixelSize: 11
-                                        font.family: root.fontMono
-                                        wrapMode: Text.Wrap
-                                        lineHeight: 1.3
-                                    }
-                                }
-                            }
-                        }
+                    function roleHeight() {
+                        if (role === "tool_call") return toolChip.implicitHeight + 6
+                        if (role === "confirm" || role === "confirm_allowed" || role === "confirm_denied")
+                            return confirmBox.implicitHeight + 8
+                        if (role === "user")      return userBubble.height + 4
+                        if (role === "assistant") return huginnText.implicitHeight + 4
+                        return 0
                     }
 
-                    // ── Thinking block ────────────────────────────────────────
+                    // ── Tool chip ─────────────────────────────────────────────
                     Rectangle {
-                        id: thinkingPill
-                        visible: role === "thinking"
+                        id: toolChip
+                        visible: role === "tool_call"
                         anchors.left: parent.left
-                        anchors.leftMargin: 16
+                        anchors.leftMargin: 14
                         anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: chatView.width - 40
-                        implicitHeight: thinkingText.implicitHeight + 16
-                        radius: 6
-                        color: Qt.rgba(root.colTextMuted.r, root.colTextMuted.g, root.colTextMuted.b, 0.04)
-                        border.color: Qt.rgba(root.colBorder.r, root.colBorder.g, root.colBorder.b, 0.5)
+                        implicitHeight: chipRow.implicitHeight + 8
+                        implicitWidth: chipRow.implicitWidth + 16
+                        radius: 4
+                        color: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.07)
+                        border.color: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b,
+                                              result.length > 0 ? 0.3 : 0.15)
                         border.width: 1
 
                         Row {
-                            anchors { left: parent.left; top: parent.top; margins: 10 }
+                            id: chipRow
+                            anchors.centerIn: parent
                             spacing: 6
-                            Text {
-                                text: "\uf0eb"
-                                color: root.colTextMuted
-                                font.pixelSize: 9; font.family: root.fontMono
-                                opacity: 0.6
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: "thinking"
-                                color: root.colTextMuted
-                                font.pixelSize: 9; font.family: root.fontMono
-                                font.italic: true; font.bold: true
-                                opacity: 0.6
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
 
-                        Text {
-                            id: thinkingText
-                            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10; topMargin: 28 }
-                            text: content
-                            color: root.colTextMuted
-                            font.pixelSize: 11
-                            font.family: root.fontSans
-                            font.italic: true
-                            opacity: 0.65
-                            wrapMode: Text.Wrap
-                            lineHeight: 1.35
+                            Text {
+                                text: result.length > 0 ? "✓" : "→"
+                                color: root.colMint
+                                font.pixelSize: 11
+                                font.family: root.font
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: content
+                                color: root.colMint
+                                font.pixelSize: 11
+                                font.family: root.font
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                visible: result.length > 0
+                                text: result.length > 60 ? result.substring(0, 60) + "…" : result
+                                color: root.colDim
+                                font.pixelSize: 10
+                                font.family: root.font
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                         }
                     }
 
                     // ── Confirm prompt ────────────────────────────────────────
                     Rectangle {
-                        id: confirmBubble
+                        id: confirmBox
                         visible: role === "confirm" || role === "confirm_allowed" || role === "confirm_denied"
                         anchors.left: parent.left
-                        anchors.leftMargin: 16
+                        anchors.leftMargin: 14
                         anchors.verticalCenter: parent.verticalCenter
-                        width: argsExpanded ? chatView.width - 40 : Math.min(confirmRow.implicitWidth + 24, chatView.width - 40)
-                        height: confirmCol.implicitHeight + 14
+                        implicitWidth: Math.min(confirmCol.implicitWidth + 24, chatView.width - 28)
+                        implicitHeight: confirmCol.implicitHeight + 16
                         radius: 8
-                        color: Qt.rgba(0.969, 0.467, 0.557, 0.07)
-                        border.color: "#f7768e"
+                        color: Qt.rgba(root.colOrange.r, root.colOrange.g, root.colOrange.b, 0.06)
+                        border.color: Qt.rgba(root.colOrange.r, root.colOrange.g, root.colOrange.b, 0.3)
                         border.width: 1
 
                         Column {
@@ -825,190 +400,106 @@ PanelWindow {
                             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
                             spacing: 8
 
-                            Row {
-                                id: confirmRow
-                                spacing: 6
-                                Text {
-                                    text: "\uf071"
-                                    color: "#f7768e"
-                                    font.pixelSize: 11; font.family: root.fontMono
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    text: "Allow Huginn to run  " + content + " ?"
-                                    color: "#f7768e"
-                                    font.pixelSize: 11; font.family: root.fontMono; font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                            Text {
+                                text: "⚠  " + content + " — approval required"
+                                color: root.colOrange
+                                font.pixelSize: 11
+                                font.family: root.font
+                                font.bold: true
                             }
 
-                            Column {
-                                visible: detail !== ""
+                            Text {
+                                visible: detail !== "" && detail !== "{}"
+                                text: detail.length > 100 ? detail.substring(0, 100) + "…" : detail
+                                color: root.colMuted
+                                font.pixelSize: 10
+                                font.family: root.font
                                 width: parent.width
-                                spacing: 3
-
-                                Text {
-                                    id: argsText
-                                    text: detail
-                                    color: root.colTextMuted
-                                    font.pixelSize: 10; font.family: root.fontMono
-                                    width: parent.width
-                                    elide: argsExpanded ? Text.NoElide : Text.ElideRight
-                                    wrapMode: argsExpanded ? Text.Wrap : Text.NoWrap
-                                }
-
-                                Text {
-                                    text: argsExpanded ? "▴ collapse" : "▾ expand"
-                                    color: expandBtnArea.containsMouse ? root.colAccent : root.colTextMuted
-                                    font.pixelSize: 9; font.family: root.fontMono
-                                    Behavior on color { ColorAnimation { duration: 120 } }
-                                    MouseArea {
-                                        id: expandBtnArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: argsExpanded = !argsExpanded
-                                    }
-                                }
+                                elide: Text.ElideRight
                             }
 
                             Row {
                                 spacing: 8
                                 visible: role === "confirm"
+
                                 Rectangle {
-                                    width: allowLabel.implicitWidth + 16; height: 22; radius: 5
-                                    color: allowArea.containsMouse ? Qt.rgba(0.388, 0.525, 0.286, 0.3) : Qt.rgba(0.388, 0.525, 0.286, 0.15)
-                                    border.color: "#9ece6a"; border.width: 1
-                                    Text { id: allowLabel; anchors.centerIn: parent; text: "Allow"; color: "#9ece6a"; font.pixelSize: 11; font.family: root.fontMono; font.bold: true }
-                                    MouseArea { id: allowArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.sendConfirm(result, true) }
+                                    width: 64; height: 22; radius: 4
+                                    color: allowArea2.containsMouse
+                                        ? Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.2)
+                                        : Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.1)
+                                    border.color: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.4)
+                                    border.width: 1
+                                    Text { anchors.centerIn: parent; text: "Approve"; color: root.colMint; font.pixelSize: 11; font.family: root.font; font.bold: true }
+                                    MouseArea { id: allowArea2; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.sendConfirm(result, true) }
                                 }
                                 Rectangle {
-                                    width: denyLabel.implicitWidth + 16; height: 22; radius: 5
-                                    color: denyArea.containsMouse ? Qt.rgba(0.969, 0.467, 0.557, 0.3) : Qt.rgba(0.969, 0.467, 0.557, 0.15)
-                                    border.color: "#f7768e"; border.width: 1
-                                    Text { id: denyLabel; anchors.centerIn: parent; text: "Deny"; color: "#f7768e"; font.pixelSize: 11; font.family: root.fontMono; font.bold: true }
-                                    MouseArea { id: denyArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.sendConfirm(result, false) }
+                                    width: 56; height: 22; radius: 4
+                                    color: denyArea2.containsMouse
+                                        ? Qt.rgba(root.colRed.r, root.colRed.g, root.colRed.b, 0.2)
+                                        : "transparent"
+                                    border.color: root.colBorder
+                                    border.width: 1
+                                    Text { anchors.centerIn: parent; text: "Deny"; color: root.colDim; font.pixelSize: 11; font.family: root.font }
+                                    MouseArea { id: denyArea2; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.sendConfirm(result, false) }
                                 }
                             }
 
-                            Row {
-                                spacing: 6
+                            Text {
                                 visible: role === "confirm_allowed" || role === "confirm_denied"
-                                Text {
-                                    text: role === "confirm_allowed" ? "✓ allowed — running..." : "✗ denied"
-                                    color: role === "confirm_allowed" ? "#9ece6a" : "#f7768e"
-                                    font.pixelSize: 11; font.family: root.fontMono; font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                                text: role === "confirm_allowed" ? "✓ approved — running" : "✕ denied"
+                                color: role === "confirm_allowed" ? root.colMint : root.colDim
+                                font.pixelSize: 11
+                                font.family: root.font
                             }
                         }
                     }
 
-                    // ── Image sent bubble ─────────────────────────────────────
+                    // ── User bubble (right-aligned) ───────────────────────────
                     Rectangle {
-                        id: imageBubble
-                        visible: role === "image_sent"
+                        id: userBubble
+                        visible: role === "user"
                         anchors.right: parent.right
-                        anchors.rightMargin: 16
+                        anchors.rightMargin: 14
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(imgBubbleRow.implicitWidth + 24, chatView.width - 80)
-                        height: imgBubbleRow.implicitHeight + 16
-                        radius: 8
-                        color: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.10)
-                        border.color: root.colAccent
+                        width: Math.min(userText.implicitWidth + 24, chatView.width - 60)
+                        height: userText.contentHeight + 18
+                        radius: 10
+                        color: "#292e42"
+                        border.color: root.colBorder
                         border.width: 1
 
-                        Row {
-                            id: imgBubbleRow
-                            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: 12 }
-                            spacing: 6
-                            Text {
-                                text: "\uf03e"
-                                color: root.colAccent
-                                font.pixelSize: 13; font.family: root.fontMono
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: content || "image"
-                                color: root.colTextPrimary
-                                font.pixelSize: 13; font.family: root.fontSans
-                                elide: Text.ElideRight
-                                width: Math.min(implicitWidth, imageBubble.width - 60)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                    }
-
-                    // User messages: right-aligned
-                    // Huginn messages: left-aligned with rune prefix
-                    Rectangle {
-                        id: bubble
-                        visible: role !== "tool_call" && role !== "thinking"
-                              && role !== "confirm" && role !== "confirm_allowed" && role !== "confirm_denied"
-                              && role !== "image_sent"
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.right:      role === "user"      ? parent.right : undefined
-                        anchors.left:       role === "assistant" ? parent.left  : undefined
-                        anchors.rightMargin: role === "user"      ? 16 : 0
-                        anchors.leftMargin:  role === "assistant" ? 16 : 0
-
-                        width:  role === "user"
-                                    ? Math.min(userText.implicitWidth + 24, chatView.width - 80)
-                                    : chatView.width - 32
-                        height: role === "user"
-                                    ? userText.contentHeight + 16
-                                    : assistantEdit.contentHeight + 16
-                        radius: 8
-
-                        color: role === "user"
-                            ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.10)
-                            : "transparent"
-                        border.color: role === "user" ? root.colAccent : "transparent"
-                        border.width: role === "user" ? 1 : 0
-
-                        // Huginn rune prefix
-                        Text {
-                            visible: role === "assistant"
-                            anchors.left: parent.left
-                            anchors.top:  parent.top
-                            anchors.topMargin: 10
-                            text: "ᚱ "
-                            color: root.colGold
-                            font.pixelSize: 13
-                            font.family: root.fontMono
-                        }
-
-                        // User messages: selectable TextEdit
                         TextEdit {
                             id: userText
-                            visible: role === "user"
-                            anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 12; rightMargin: 12; topMargin: 8 }
+                            anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 12; rightMargin: 12; topMargin: 9 }
                             text: role === "user" ? content : ""
-                            color: root.colTextPrimary
+                            color: root.colText
                             font.pixelSize: 13
-                            font.family: root.fontSans
+                            font.family: root.font
                             wrapMode: TextEdit.Wrap
                             readOnly: true
                             selectByMouse: true
-                            selectionColor: Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.3)
+                            selectionColor: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.25)
                         }
+                    }
 
-                        // Assistant messages: markdown via TextEdit
-                        TextEdit {
-                            id: assistantEdit
-                            visible: role === "assistant"
-                            anchors { left: parent.left; right: parent.right; top: parent.top
-                                      leftMargin: 26; rightMargin: 12; topMargin: 8 }
-                            height: contentHeight
-                            text: role === "assistant" ? content : ""
-                            textFormat: TextEdit.MarkdownText
-                            readOnly: true
-                            color: root.colTextMuted
-                            selectionColor: Qt.rgba(0.537, 0.863, 1.0, 0.3)
-                            font.pixelSize: 13
-                            font.family: root.fontSans
-                            wrapMode: TextEdit.Wrap
-                        }
+                    // ── Huginn ambient text (left, no bubble) ─────────────────
+                    TextEdit {
+                        id: huginnText
+                        visible: role === "assistant"
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: role === "assistant" ? content : ""
+                        textFormat: TextEdit.MarkdownText
+                        readOnly: true
+                        selectByMouse: true
+                        color: root.colMuted
+                        font.pixelSize: 13
+                        font.family: root.font
+                        wrapMode: TextEdit.Wrap
+                        selectionColor: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.25)
                     }
                 }
 
@@ -1016,255 +507,82 @@ PanelWindow {
                 Text {
                     anchors.centerIn: parent
                     visible: chatModel.count === 0
-                    text: "Thought takes flight.\nAsk me anything."
-                    color: root.colBorder
-                    font.pixelSize: 13
-                    font.family: root.fontMono
+                    text: "ᚹ\nquiet"
+                    color: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.15)
+                    font.pixelSize: 28
+                    font.family: root.font
                     horizontalAlignment: Text.AlignHCenter
-                    lineHeight: 1.6
+                    lineHeight: 1.4
                 }
-            } // ListView
-
-                // Scroll-to-bottom button — appears when not at bottom
-                Rectangle {
-                    property bool atBottom: chatView.contentY + chatView.height >= chatView.contentHeight - 30
-                    visible: !atBottom && chatModel.count > 0
-                    anchors.bottom: parent.bottom
-                    anchors.right:  parent.right
-                    anchors.margins: 10
-                    width: 28; height: 28
-                    radius: 14
-                    color: scrollDownArea.containsMouse
-                        ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.25)
-                        : Qt.rgba(root.colBg.r, root.colBg.g, root.colBg.b, 0.9)
-                    border.color: root.colAccent
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "↓"
-                        color: root.colAccent
-                        font.pixelSize: 13
-                        font.family: root.fontMono
-                    }
-                    MouseArea {
-                        id: scrollDownArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: Qt.callLater(function() { chatView.positionViewAtEnd() })
-                    }
-                }
-            } // Item wrapper
-
-            // Divider
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: root.colBorder
             }
 
-            // Input row
+            Rectangle { Layout.fillWidth: true; height: 1; color: root.colBorder }
+
+            // Input
             Rectangle {
                 Layout.fillWidth: true
                 height: 52
-                color: Qt.rgba(0.141, 0.157, 0.220, 0.95)
+                color: "transparent"
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    anchors.topMargin: 4
-                    spacing: 6
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 12
+                    anchors.topMargin: 8
+                    anchors.bottomMargin: 8
+                    spacing: 8
 
-                    // Paperclip: attach image from clipboard or send pending image
                     Rectangle {
-                        implicitWidth:  32
-                        implicitHeight: 32
-                        radius: 8
-                        color: root.pendingImagePath !== ""
-                            ? Qt.rgba(root.colAccent.r, root.colAccent.g, root.colAccent.b, 0.18)
-                            : clipArea.containsMouse ? Qt.rgba(1,1,1,0.06) : "transparent"
-                        border.color: root.pendingImagePath !== "" ? root.colAccent : root.colBorder
-                        border.width: 1
-
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\uf0c1"
-                            color: root.pendingImagePath !== "" ? root.colAccent : root.colTextMuted
-                            font.pixelSize: 13; font.family: root.fontMono
-                        }
-
-                        MouseArea {
-                            id: clipArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (root.pendingImagePath !== "") {
-                                    root.sendImage()
-                                } else {
-                                    root.grabClipboardImage()
-                                }
-                            }
-                        }
-                    }
-
-                    // Push-to-talk mic button
-                    Rectangle {
-                        implicitWidth:  32
-                        implicitHeight: 32
-                        radius: 8
-                        color: root.isRecording
-                            ? Qt.rgba(0.969, 0.467, 0.557, 0.20)
-                            : micArea.containsMouse
-                                ? Qt.rgba(1, 1, 1, 0.06)
-                                : "transparent"
-                        border.color: root.isRecording ? "#f7768e" : root.colBorder
-                        border.width: 1
-
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\uf130"
-                            color: root.isRecording ? "#f7768e" : root.colTextMuted
-                            font.pixelSize: 14
-                            font.family: root.fontMono
-
-                            SequentialAnimation on opacity {
-                                running: root.isRecording
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.4; duration: 500; easing.type: Easing.InOutSine }
-                                NumberAnimation { to: 1.0; duration: 500; easing.type: Easing.InOutSine }
-                            }
-                        }
-
-                        MouseArea {
-                            id: micArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onPressed: {
-                                if (!root.isStreaming && !root.isRecording) {
-                                    root.isRecording = true
-                                    recordProc.running = true
-                                }
-                            }
-                            onReleased: {
-                                if (root.isRecording) {
-                                    recordProc.running = false
-                                }
-                            }
-                        }
-                    }
-
-                    TextInput {
-                        id: inputField
                         Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
-                        color: root.colTextPrimary
-                        font.pixelSize: 13
-                        font.family: root.fontSans
-                        selectionColor: Qt.rgba(0.537, 0.863, 1.0, 0.3)
-                        clip: true
-
-                        // Placeholder
-                        Text {
-                            anchors.fill: parent
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: inputField.text.length === 0
-                            text: root.isConnected ? "speak..." : "daemon offline"
-                            color: root.colBorder
-                            font: inputField.font
-                        }
-
-                        Keys.onReturnPressed: root.pendingImagePath !== "" ? root.sendImage() : root.sendMessage()
-                        Keys.onEscapePressed: escapeClose.running = true
-                    }
-
-                    // TTS toggle
-                    Rectangle {
-                        implicitWidth:  32
-                        implicitHeight: 32
-                        radius: 8
-                        color: root.ttsEnabled
-                            ? Qt.rgba(root.colGold.r, root.colGold.g, root.colGold.b, 0.12)
-                            : ttsArea.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                        border.color: root.ttsEnabled ? root.colGold : root.colBorder
+                        Layout.fillHeight: true
+                        color: root.colSurface
+                        border.color: inputField.activeFocus
+                            ? Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.4)
+                            : root.colBorder
                         border.width: 1
-
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.ttsEnabled ? "\uf028" : "\uf026"
-                            color: root.ttsEnabled ? root.colGold : root.colTextMuted
-                            font.pixelSize: 13
-                            font.family: root.fontMono
-                        }
-
-                        MouseArea {
-                            id: ttsArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.ttsEnabled = !root.ttsEnabled
-                        }
-                    }
-
-                    // Show-thinking toggle
-                    Rectangle {
-                        implicitWidth:  32
-                        implicitHeight: 32
                         radius: 8
-                        color: root.showThinking
-                            ? Qt.rgba(root.colTextMuted.r, root.colTextMuted.g, root.colTextMuted.b, 0.10)
-                            : thinkToggleArea.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
-                        border.color: root.showThinking ? root.colTextMuted : root.colBorder
-                        border.width: 1
+                        Behavior on border.color { ColorAnimation { duration: 150 } }
 
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\uf0eb"
-                            color: root.showThinking ? root.colTextPrimary : root.colTextMuted
+                        TextInput {
+                            id: inputField
+                            anchors { fill: parent; leftMargin: 11; rightMargin: 11 }
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: root.colText
                             font.pixelSize: 13
-                            font.family: root.fontMono
-                            opacity: root.showThinking ? 1.0 : 0.5
-                        }
+                            font.family: root.font
+                            selectionColor: Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.25)
+                            clip: true
 
-                        MouseArea {
-                            id: thinkToggleArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.showThinking = !root.showThinking
+                            Text {
+                                anchors.fill: parent
+                                verticalAlignment: Text.AlignVCenter
+                                visible: inputField.text.length === 0
+                                text: root.isConnected ? "ask huginn…" : "daemon offline"
+                                color: root.colDim
+                                font: inputField.font
+                            }
+
+                            Keys.onReturnPressed: root.sendMessage()
+                            Keys.onEscapePressed: escapeClose.running = true
                         }
                     }
 
-                    // Send button
                     Rectangle {
-                        implicitWidth:  32
-                        implicitHeight: 32
+                        width: 36; height: 36
                         radius: 8
                         color: sendArea.containsMouse && !root.isStreaming
-                            ? Qt.rgba(0.537, 0.863, 1.0, 0.15)
+                            ? Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.15)
                             : "transparent"
-                        border.color: root.isStreaming ? root.colBorder : root.colAccent
+                        border.color: root.isStreaming ? root.colBorder : Qt.rgba(root.colMint.r, root.colMint.g, root.colMint.b, 0.5)
                         border.width: 1
-
                         Behavior on color { ColorAnimation { duration: 120 } }
 
                         Text {
                             anchors.centerIn: parent
                             text: root.isStreaming ? "…" : "↵"
-                            color: root.isStreaming ? root.colBorder : root.colAccent
+                            color: root.isStreaming ? root.colDim : root.colMint
                             font.pixelSize: 14
-                            font.family: root.fontMono
+                            font.family: root.font
                         }
 
                         MouseArea {
@@ -1277,8 +595,6 @@ PanelWindow {
                     }
                 }
             }
-                } // inner ColumnLayout
-            } // RowLayout
         }
     }
 }

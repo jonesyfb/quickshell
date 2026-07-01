@@ -15,6 +15,8 @@ PanelWindow {
 
     anchors.bottom: true
     anchors.right:  true
+    // Shift left to clear the 380px chat panel when it's open
+    margins.right: root.chatOverlayOpen ? 390 : 0
 
     implicitWidth:  root.notifVisible ? 450 : 0
     implicitHeight: root.notifVisible ? 250 : 0
@@ -22,12 +24,21 @@ PanelWindow {
 
     // ── State ─────────────────────────────────────────────────────────────────
     property bool   notifVisible: false
+    property bool   chatOverlayOpen: false
     property bool   notifIdle:    false
     property string notifType:    "info"
     property string notifTitle:   "huginn"
     property string notifBody:    ""
     property string bodyDisplay:  ""
     property string notifTime:    ""
+
+    // ── Track chat overlay state ──────────────────────────────────────────────
+    Process {
+        id: overlayCheck
+        command: ["sh", "-c", "[ -f /tmp/huginn-visible ] && echo 1 || echo 0"]
+        stdout: SplitParser { onRead: function(d) { root.chatOverlayOpen = d.trim() === "1" } }
+    }
+    Timer { interval: 300; running: true; repeat: true; onTriggered: overlayCheck.running = true }
 
     // ── IPC polling ───────────────────────────────────────────────────────────
     Process {
@@ -93,12 +104,6 @@ PanelWindow {
         }
     }
 
-    // ── Crow caw ──────────────────────────────────────────────────────────────
-    Process {
-        id: crowPlay
-        command: ["sh", "-c", "huginn-crow &"]
-    }
-
     // ── API ───────────────────────────────────────────────────────────────────
     function fireNotif() {
         bodyDisplay  = ""
@@ -114,7 +119,6 @@ PanelWindow {
         notifTime = Qt.formatTime(new Date(), "HH:mm")
         Qt.callLater(function() {
             notifVisible = true
-            crowPlay.running = true
             enterAnim.start()
             landAnim.start()
             twTimer.start()
@@ -271,9 +275,9 @@ PanelWindow {
                                 font.pixelSize: 9
                                 font.weight: Font.Medium
                                 font.letterSpacing: 0.6
-                                color: root.notifType === "warn" ? "#e8b040"
-                                     : root.notifType === "ok"   ? "#40d880"
-                                     :                             "#9090e8"
+                                color: root.notifType === "warn" ? "#ff9e64"
+                                     : root.notifType === "ok"   ? "#7ed9a3"
+                                     :                             "#7ed9a3"
                             }
                         }
 
