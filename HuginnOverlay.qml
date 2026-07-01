@@ -35,6 +35,7 @@ PanelWindow {
     anchors.right:  true
     anchors.top:    true
     anchors.bottom: true
+    margins.top:    32
     implicitWidth:  overlayVisible ? 380 : 0
     color: "transparent"
 
