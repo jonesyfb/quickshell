@@ -25,6 +25,14 @@ PanelWindow {
     implicitHeight: Math.max(toastCol.implicitHeight, 1)
     color: "transparent"
 
+    // Restrict pointer input to the toasts themselves — otherwise this
+    // Overlay-layer surface eats clicks over its whole box (even the empty
+    // padding sliver left when there are no notifications), which sits above
+    // fullscreen game surfaces and blocks clicks in that corner.
+    mask: Region {
+        item: toastCol
+    }
+
     function urgencyGlyph(u) {
         if (u === NotificationUrgency.Critical) return "ᚼ"  // Hagalaz - destruction/chaos
         if (u === NotificationUrgency.Low)      return "ᛟ"  // Othala - settled/passive
@@ -53,7 +61,7 @@ PanelWindow {
         id: toastCol
         width: parent.width
         spacing: 20
-        topPadding: 16
+        topPadding: notifServer.trackedNotifications.values.length > 0 ? 16 : 0
 
         Repeater {
             model: notifServer.trackedNotifications.values
