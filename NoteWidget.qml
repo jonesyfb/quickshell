@@ -24,7 +24,9 @@ PanelWindow {
 
     Process {
         id: noteReader
-        command: ["cat", "/home/nate/Documents/Obsidian Vault/Goals.md"]
+        // Strips YAML frontmatter, which MarkdownText would otherwise render as a rule + tag line.
+        command: ["awk", "NR==1 && /^---$/{fm=1; next} fm && /^---$/{fm=0; next} !fm",
+                  "/home/nate/Documents/Obsidian Vault/Personal/Life/Goals.md"]
         stdout: SplitParser {
             onRead: function(data) { noteText += data + "\n" }
         }
