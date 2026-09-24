@@ -44,6 +44,8 @@ PanelWindow {
     property bool   isStreaming:     false
     property bool   isConnected:     false
     property string pendingConfirmId: ""
+    property bool   historyMode:     false
+    property string activitySummary: ""
 
     visible: overlayVisible
 
@@ -53,6 +55,17 @@ PanelWindow {
 
     // ── Message model ─────────────────────────────────────────────────────────
     ListModel { id: chatModel }
+    ListModel { id: historyModel }
+
+    function toggleHistory() {
+        root.historyMode = !root.historyMode
+        if (root.historyMode) root.refreshHistory()
+    }
+
+    function refreshHistory() {
+        historyProc.command = ["python3", root.sendScript, "gate_history"]
+        historyProc.running = true
+    }
 
     function appendToken(token) {
         if (chatModel.count > 0 && chatModel.get(chatModel.count - 1).role === "assistant") {
@@ -122,6 +135,20 @@ PanelWindow {
                 root.appendToken(msg.message)
                 root.isStreaming = false
                 root.isConnected = false
+            } else if (msg.type === "gate_history") {
+                root.activitySummary = msg.activity || ""
+                historyModel.clear()
+                var all = (msg.steam || []).map(function(v) { v.target = "steam"; return v })
+                    .concat((msg.youtube || []).map(function(v) { v.target = "youtube"; return v }))
+                all.sort(function(a, b) { return b.ts - a.ts })
+                for (var i = 0; i < all.length; i++) {
+                    historyModel.append({
+                        target: all[i].target,
+                        approved: !!all[i].approved,
+                        message: all[i].message || "",
+                        ts: all[i].ts || 0,
+                    })
+                }
             }
         } catch(e) {}
     }
@@ -165,6 +192,16 @@ PanelWindow {
     }
 
     Timer { interval: 3000; running: true; repeat: true; onTriggered: pingProc.running = true }
+
+    Process {
+        id: historyProc
+        stdout: SplitParser { onRead: function(line) { root.handleIpcLine(line) } }
+    }
+
+    Timer {
+        interval: 10000; running: true; repeat: true
+        onTriggered: { if (root.historyMode) root.refreshHistory() }
+    }
 
     Process {
         id: visibilityChecker
@@ -267,9 +304,20 @@ PanelWindow {
 
                     Item { Layout.fillWidth: true }
 
+                    // Gate history
+                    Text {
+                        text: "☰"
+                        color: root.historyMode ? root.colMint : (historyArea.containsMouse ? root.colMint : root.colDim)
+                        font.pixelSize: 14
+                        font.family: root.font
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                        MouseArea { id: historyArea; anchors.fill: parent; anchors.margins: -4; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.toggleHistory() }
+                    }
+
                     // Recover
                     Text {
                         text: "↺"
+                        visible: !root.historyMode
                         color: recoverArea.containsMouse ? root.colMint : root.colDim
                         font.pixelSize: 15
                         font.family: root.font
@@ -301,9 +349,84 @@ PanelWindow {
 
             Rectangle { Layout.fillWidth: true; height: 1; color: root.colBorder }
 
+            // Gate verdict history
+            ListView {
+                id: historyView
+                visible: root.historyMode
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: historyModel
+                spacing: 2
+                topMargin: 14
+                bottomMargin: 14
+
+                header: Text {
+                    width: historyView.width - 28
+                    x: 14
+                    text: root.activitySummary || "(loading…)"
+                    wrapMode: Text.Wrap
+                    color: root.colDim
+                    font.pixelSize: 10
+                    font.family: root.font
+                    bottomPadding: 12
+                }
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                    contentItem: Rectangle { implicitWidth: 2; radius: 1; color: root.colBorder }
+                }
+
+                delegate: Item {
+                    required property string target
+                    required property bool   approved
+                    required property string message
+                    required property int    ts
+
+                    width: historyView.width
+                    height: histRow.implicitHeight + 12
+
+                    Row {
+                        id: histRow
+                        x: 14
+                        width: parent.width - 28
+                        spacing: 8
+
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            anchors.top: parent.top
+                            anchors.topMargin: 4
+                            color: approved ? root.colMint : root.colRed
+                        }
+
+                        Column {
+                            width: parent.width - 16
+                            spacing: 2
+
+                            Text {
+                                text: target + (approved ? " — approved" : " — denied")
+                                color: root.colMuted
+                                font.pixelSize: 10
+                                font.bold: true
+                                font.family: root.font
+                            }
+                            Text {
+                                width: parent.width
+                                text: message
+                                wrapMode: Text.Wrap
+                                color: root.colText
+                                font.pixelSize: 11
+                                font.family: root.font
+                            }
+                        }
+                    }
+                }
+            }
+
             // Chat log
             ListView {
                 id: chatView
+                visible: !root.historyMode
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
