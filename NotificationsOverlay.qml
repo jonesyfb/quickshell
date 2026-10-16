@@ -49,11 +49,27 @@ PanelWindow {
         return sysState.colAccent
     }
 
+    // Append one JSON line per notification to ~/.local/state/quickshell/notifications.log
+    function logNotification(n) {
+        const line = JSON.stringify({
+            time: new Date().toISOString(),
+            app: n.appName,
+            desktopEntry: n.desktopEntry,
+            summary: n.summary,
+            body: n.body,
+            urgency: n.urgency
+        })
+        Quickshell.execDetached(["sh", "-c",
+            'd="${XDG_STATE_HOME:-$HOME/.local/state}/quickshell"; mkdir -p "$d"; printf "%s\\n" "$1" >> "$d/notifications.log"',
+            "sh", line])
+    }
+
     NotificationServer {
         id: notifServer
         keepOnReload: true
         onNotification: function(notif) {
             notif.tracked = true
+            root.logNotification(notif)
         }
     }
 
